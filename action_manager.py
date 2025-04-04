@@ -395,8 +395,8 @@ class ActionManager:
     def lightbar_breath(self):
         self.my_dog.rgb_strip.set_mode(style="breath", color='pink', bps=0.5)
 
-    def lightbar_boom(self):
-        self.my_dog.rgb_strip.set_mode(style="boom", color='blue', bps=3)
+    def lightbar_boom(self, color='blue'):
+        self.my_dog.rgb_strip.set_mode(style="boom", color=color, bps=3)
 
     def lightbar_bark(self):
         self.my_dog.rgb_strip.set_mode(style="bark", color="#a10a0a", bps=10, brightness=0.5)
@@ -472,14 +472,27 @@ class ActionManager:
     
     async def start_talking(self):
         print("[ActionManager] Starting to talk...")
+        # try:
+        #     start_angles = self.my_dog.head_current_angles
+        # except AttributeError as e:
+        #     print(f"[ERROR] Unable to retrieve head angles: {e}")
+        #     start_angles = None
         self.isTalkingMovement = True
         #self.lightbar_bark()
-        look_forward(self.my_dog)
+        #look_forward(self.my_dog)
         while self.isTalkingMovement:
             await talk(self.my_dog)
             await asyncio.sleep(0.1)
-        look_forward(self.my_dog)
+        #look_forward(self.my_dog)
         #self.lightbar_breath()
+        #return to start angles
+        # if(start_angles is not None):
+        #     self.my_dog.head_move(start_angles, speed=100)
+        # else:
+        #     # If we can't get the angles, just set it to a default position
+        #     start_angles = [0, 0, 0]
+        #     # Assuming the dog has a head_move method that takes angles
+        # self.my_dog.head_move(start_angles, speed=100)
 
     async def stop_talking(self):
         print("[ActionManager] Stop Talking...")
@@ -487,6 +500,6 @@ class ActionManager:
         self.lightbar_breath()
         self.my_dog.body_stop()
 
-        
-        
+
+
 

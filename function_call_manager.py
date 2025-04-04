@@ -61,8 +61,10 @@ class FunctionCallManager:
             
             elif func_name == 'create_new_persona':
                 persona_description = arguments.get("persona_description", None)
+                self.action_manager.lightbar_boom('white')
                 new_persona = await generate_persona(persona_description)
                 await self.client.reconnect(new_persona['name'], new_persona)
+                self.lightbar_breath()
                 print(f"[FunctionCallManager] Creating new persona: {persona_description}")
                 result = "success"
                 return result
@@ -78,7 +80,9 @@ class FunctionCallManager:
                 persona_name = arguments.get("persona_name", "Vektor Pulsecheck")
                 print(f"[FunctionCallManager] Switching persona to: {persona_name}")
                 # Force a reconnect with a new persona
+                self.action_manager.lightbar_boom('green')
                 await self.reconnect(persona_name)
+                self.lightbar_breath()
                 result = "persona_switched"
                 print(f"[FunctionCallManager] Result of 'switch_persona': {result}")
                 return result

@@ -118,7 +118,7 @@ async def main():
 
                     if(len(new_goal) > 0):
                         action_manager.state.goal = new_goal
-                        client.send_awareness(action_manager)
+                        client.send_awareness()
 
                 await asyncio.sleep(0.3)
                 is_change = False

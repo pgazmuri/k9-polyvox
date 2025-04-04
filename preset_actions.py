@@ -429,24 +429,30 @@ def speak(my_dog, name, volume=100):
         return music
 
 async def talk(my_dog, pitch_comp=-15, amplitude=4, duration=1.5, speed=85, fps=8):
-    r = 0
+    # Get the current head position
+    current_head_position = my_dog.head_current_angles
+    current_y, current_r, current_p = current_head_position
+
     angs = []
 
-    total_frames = int(duration * fps)  # 15 frames
+    total_frames = int(duration * fps)
     yaw_cycles = 2
     pitch_cycles = 1
     roll_cycles = 1.5
 
     for i in range(total_frames):
         t = i / total_frames
-        y = round(amplitude * sin(2 * pi * yaw_cycles * t), 2)
-        p = round(amplitude * sin(2 * pi * pitch_cycles * t + pi/4) + pitch_comp, 2)
-        r = round(amplitude * sin(2 * pi * roll_cycles * t), 2)
-        y += round(random.uniform(-0.3, 0.3), 2)
-        p += round(random.uniform(-0.3, 0.3), 2)
-        angs.append([y, r, p])
+        # Calculate base sinusoidal motion (bounded by nature)
+        y = round(amplitude * sin(2 * pi * yaw_cycles * t), 2) + current_y
+        p = round(amplitude * sin(2 * pi * pitch_cycles * t + pi/4) + pitch_comp, 2) + current_p
+        r = round(amplitude * sin(2 * pi * roll_cycles * t), 2) + current_r
+        
+        # Add small random jitter (not cumulative)
+        y_jitter = round(random.uniform(-0.3, 0.3), 2)
+        p_jitter = round(random.uniform(-0.3, 0.3), 2)
+        
+        angs.append([y + y_jitter, r, p + p_jitter])
 
-    start = time.time()
     my_dog.head_move_raw(angs, speed=speed)
     await wait_head_done(my_dog)
 

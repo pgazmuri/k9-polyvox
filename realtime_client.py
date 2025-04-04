@@ -50,7 +50,7 @@ class RealtimeClient:
         )
         print("[RealtimeClient] Connected to Realtime API")
         asyncio.create_task(self.receive())  # Start receiving in the background
-        asyncio.create_task(self.send_awareness(self.action_manager))
+        asyncio.create_task(self.send_awareness())
         
     async def send_awareness(self):
         asyncio.sleep(0.1)
@@ -60,6 +60,7 @@ class RealtimeClient:
                 "tool_choice": "required"
             }
         })
+        self.action_manager.state.last_awareness_event_time = time.time()
 
     async def close(self):
         """Close the active websocket connection."""
@@ -257,17 +258,6 @@ class RealtimeClient:
         })
         # This is usually expected after a function call output
         await self.send("response.create", {})
-
-    async def send_awareness(self, action_manager):
-        print("Sending awareness: ", action_manager.state.goal)
-        await self.send("response.create", {
-            "response": {
-                "instructions": "get_awareness_status",
-                "tool_choice": "required"
-            }
-        })
-        #save last awareness event time
-        action_manager.state.last_awareness_event_time = time.time()
 
     async def update_session(self, persona="Vektor Pulsecheck"):
         """
