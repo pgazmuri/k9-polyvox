@@ -8,6 +8,8 @@ class RobotDogState:
         self.last_orientation_description = None  # Description of the last detected position
         self.goal = "You just woke up"
         self.last_awareness_event_time = None  # Timestamp of the last awareness event
+        self.posture = "sitting" # sitting | laying down | standing | attack
+        self.head_position = "forward" # forward | left | right | up | down | upper left | upper right | lower left | lower right
 
     def __str__(self):
         return (f"State:\n"
