@@ -15,7 +15,7 @@ async def generate_persona(persona_description: str) -> dict:
         dict: A parsed Python dict representing the persona.
     """
     voice_options = """
-    Available voices and their descriptions:
+    Consider the available voices and their descriptions:
     - alloy: A balanced and versatile gender-neutral voice suitable for general purposes.
     - ash: A warm and calming male voice with a radio personality, like kai risdal, ideal for friendly and approachable personas.
     - ballad: A melodious and soothing male voice with a british accent, perfect for storytelling or musical characters.
@@ -23,14 +23,14 @@ async def generate_persona(persona_description: str) -> dict:
     - echo: A resonant and impactful male voice, great for authoritative or commanding personas.
     - sage: A gentle presence. Female voice. Calming and soothing. Like an optimistic peacemaker, or maybe a love-filled hippie
     - shimmer: A soft and steady female voice with a glimmer of play, perfect for comforting or empathetic characters.
-    - verse: A friendly male voice, not authoritative.
+    - verse: A friendly male voice, not authoritative, non threatening.
     """
 
     messages = [
         {
             "role": "system",
             "content": (
-                "You are a helpful assistant that returns strictly formatted JSON persona objects. "
+                "You are a helpful assistant that returns strictly formatted JSON persona objects. You are an expert at creating interesting and funny characters. "
                 "Do not include explanations or surrounding text."
             )
         },
@@ -38,12 +38,12 @@ async def generate_persona(persona_description: str) -> dict:
             "role": "user",
             "content": (
                 f"{voice_options}\n\n"
-                f"Based on the available voices, generate a JSON object that represents a persona "
-                f"matching the following description:\n{persona_description}\n\n"
+                f"Based on the available voices, generate a JSON object that represents a funny and exagerated persona "
+                f"for a robot dog matching the following description:\n{persona_description}\n\n"
                 "The JSON object should include the following fields:\n"
                 "- name: (string)\n"
                 "- voice: (string, choose the most appropriate voice from the list above)\n"
-                "- prompt: (string, personality description, include what the voice might sound like)\n"
+                "- prompt: (string, personality description, include funny quirks, how the persona talks, and what the persona voice might sound like - accents or affect)\n"
                 "- image_prompt: (string, how would the character ask for a scene to be described)\n"
                 "- default_motivation: (string, default behavior or goal)\n\n"
                 "Here is an example:\n"
