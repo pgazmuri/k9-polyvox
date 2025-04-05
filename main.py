@@ -117,7 +117,7 @@ async def main():
                         new_goal = action_manager.state.last_orientation_description
 
                     if(len(new_goal) > 0):
-                        action_manager.state.goal = new_goal
+                        action_manager.state.goal = new_goal + " You must say and do something in reaction to this."
                         client.send_awareness()
 
                 await asyncio.sleep(0.3)
