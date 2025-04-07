@@ -461,42 +461,55 @@ async def wait_head_done(my_dog):
             await asyncio.sleep(.01)
 
 
-def look_forward(my_dog):
+def look_forward(my_dog, pitch_comp=0):
     r = 0
-    angs = [[0,0,0]]
+    angs = [[0,0,0+pitch_comp]]
     my_dog.head_move_raw(angs)
     my_dog.wait_all_done()
 
 
-def look_left(my_dog):
+def look_up(my_dog, pitch_comp=0):
+    r = 0
+    angs = [[0,0,35+pitch_comp]]
+    my_dog.head_move_raw(angs)
+    my_dog.wait_all_done()
+
+
+def look_down(my_dog, pitch_comp=0):
+    r = 0
+    angs = [[0,0,-35+pitch_comp]]
+    my_dog.head_move_raw(angs)
+    my_dog.wait_all_done()
+
+
+def look_left(my_dog, pitch_comp=0):
     angs = [[60,0,0]]
     my_dog.head_move_raw(angs)
     my_dog.wait_all_done()
 
 
-def look_right(my_dog):
+def look_right(my_dog, pitch_comp=0):
     angs = [[-60,0,0]]
     my_dog.head_move_raw(angs)
     my_dog.wait_all_done()
 
 
-def think(my_dog, pitch_comp=0):
+def head_up_left(my_dog, pitch_comp=0):
     h_l = [
-        [20, -15, 15+pitch_comp]
+        [25, 0, 35+pitch_comp]
     ]
 
     my_dog.head_move_raw(h_l, speed=80)
     my_dog.wait_all_done()
 
 
-def recall(my_dog, pitch_comp=0):
+def head_up_right(my_dog, pitch_comp=0):
     h_l = [
-        [-20, 15, 15+pitch_comp]
+        [-25, 0, 35+pitch_comp]
     ]
 
     my_dog.head_move_raw(h_l, speed=80)
     my_dog.wait_all_done()
-
 
 def head_down_left(my_dog, pitch_comp=0):
     h_l = [
@@ -510,6 +523,23 @@ def head_down_left(my_dog, pitch_comp=0):
 def head_down_right(my_dog, pitch_comp=0):
     h_l = [
         [-25, 0, -35+pitch_comp]
+    ]
+
+    my_dog.head_move_raw(h_l, speed=80)
+    my_dog.wait_all_done()
+
+def think(my_dog, pitch_comp=0):
+    h_l = [
+        [20, -15, 15+pitch_comp]
+    ]
+
+    my_dog.head_move_raw(h_l, speed=80)
+    my_dog.wait_all_done()
+
+
+def recall(my_dog, pitch_comp=0):
+    h_l = [
+        [-20, 15, 15+pitch_comp]
     ]
 
     my_dog.head_move_raw(h_l, speed=80)

@@ -25,9 +25,9 @@ class FunctionCallManager:
         """
         try:
             func_name = function_call['name']
-            arguments = json.loads(function_call['arguments'])
 
             if func_name == 'look_and_see':
+                arguments = json.loads(function_call['arguments'])
                 question = arguments.get("question", "")
                 # You could pass a persona prompt if you want
                 result = await self.action_manager.take_photo("", question=question)
@@ -52,18 +52,21 @@ class FunctionCallManager:
                 return result
 
             elif func_name == 'set_volume':
+                arguments = json.loads(function_call['arguments'])
                 self.action_manager.state.volume = arguments.get("volume_level", 1)
                 print(f"[FunctionCallManager] Volume set to: {self.action_manager.state.volume}")
                 result = "success"
                 return result
             
             elif func_name == 'set_goal':
+                arguments = json.loads(function_call['arguments'])
                 self.action_manager.state.goal = arguments.get("goal", "You are unsure of your goal. Ask what you should do next, or not.")
                 print(f"[FunctionCallManager] Goal set to: {self.action_manager.state.goal}")
                 result = "success"
                 return result
             
             elif func_name == 'create_new_persona':
+                arguments = json.loads(function_call['arguments'])
                 persona_description = arguments.get("persona_description", None)
                 music = speak(self.action_manager.my_dog, "audio/angelic_ascending.mp3")
                 self.action_manager.lightbar_boom('white')
@@ -76,6 +79,7 @@ class FunctionCallManager:
                 return result
 
             elif func_name == 'perform_action':
+                arguments = json.loads(function_call['arguments'])
                 action_name = arguments.get("action_name", "")
                 await self.action_manager.perform_action(action_name)
                 result = "success"
@@ -83,6 +87,7 @@ class FunctionCallManager:
                 return result
 
             elif func_name == 'switch_persona':
+                arguments = json.loads(function_call['arguments'])
                 persona_name = arguments.get("persona_name", "Vektor Pulsecheck")
                 print(f"[FunctionCallManager] Switching persona to: {persona_name}")
                 # Force a reconnect with a new persona

@@ -118,7 +118,8 @@ async def main():
 
                     if(len(new_goal) > 0):
                         action_manager.state.goal = new_goal + " You must say and do something in reaction to this."
-                        client.send_awareness()
+                        print(f"Goal: {action_manager.state.goal}")
+                        await client.send_awareness()
 
                 await asyncio.sleep(0.3)
                 is_change = False
