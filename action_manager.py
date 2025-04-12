@@ -1,6 +1,8 @@
 import math
 import time
 import psutil
+import asyncio
+import random
 from state_manager import RobotDogState
 
 # External dependencies
@@ -616,6 +618,88 @@ class ActionManager:
             "sit_2_stand", "bored", "walk_forward", "walk_backward", "lie", "stand", "sit",
             "walk_left", "walk_right", "tilt_head_left", "tilt_head_right", "doze_off"
         ]
+
+    async def detect_status(self, audio_manager, client):
+        """
+        Background task that detects changes in environment and updates the goal.
+        Also periodically reminds the model of its default goal if it's been inactive.
+        """
+        is_change = False
+        last_change_time = 0  # Track the last time a change was noticed
+        last_reminder_time = time.time()  # Track the last time we reminded of the default goal
+        reminder_interval = random.randint(20, 40)  # Randomized interval between 20-40 seconds
+        
+        while True:
+            try:
+                print("Volume: ", audio_manager.latest_volume)
+                # Detect individual changes
+                petting_changed = self.detect_petting_change()
+                sound_changed = self.detect_sound_direction_change()
+                face_changed = await self.detect_face_change()
+                orientation_changed = self.detect_orientation_change()
+
+                # Combine for overall change
+                is_change = petting_changed or sound_changed or face_changed or orientation_changed
+
+                # Ignore changes if within the last 5 seconds or if talking movement is active
+                current_time = time.time()
+                if is_change and (current_time - last_change_time < 5 or self.isTalkingMovement):
+                    is_change = False
+
+                new_goal = ""
+
+                if is_change and (not self.isTalkingMovement):
+                    new_goal = ""
+                    last_change_time = current_time  # Update the last change time
+                    if petting_changed:
+                        if (current_time - self.state.petting_detected_at) < 10:
+                            new_goal = "You are being petted!"
+                        else:
+                            new_goal = "You are no longer being petted."
+                    if sound_changed:
+                        if (audio_manager.latest_volume > 30):
+                            new_goal = f"Sound (is someone talking?) came from direction: {self.state.last_sound_direction}"
+                    if face_changed:
+                        if (current_time - self.state.face_detected_at) < 10:
+                            new_goal = "A face is detected!"
+                        else:
+                            new_goal = "A face is no longer detected."
+                    if orientation_changed:
+                        new_goal = self.state.last_orientation_description
+
+                    if(len(new_goal) > 0):
+                        self.state.goal = new_goal + " You must say and do something in reaction to this."
+                        print(f"Goal: {self.state.goal}")
+                        await client.send_awareness()
+                        last_reminder_time = current_time  # Reset reminder timer when we have a new goal
+                    else:
+                        # Check if we need to remind of default goal
+                        elapsed_since_reminder = current_time - last_reminder_time
+                        if (not self.isTalkingMovement and 
+                            elapsed_since_reminder > reminder_interval and 
+                            client.persona is not None):
+                            
+                            await self.remind_of_default_goal(client)
+                            last_reminder_time = current_time
+                            reminder_interval = random.randint(20, 40)  # Randomize next interval
+
+                await asyncio.sleep(0.3)
+                is_change = False
+            except Exception as e:
+                print(f"[ActionManager::detect_status] Error: {e}")
+                await asyncio.sleep(1)  # Prevent tight loop on failure
+
+    async def remind_of_default_goal(self, client):
+        """
+        Reminds the model of its default goal or motivation based on the current persona.
+        """
+        try:
+            default_motivation = client.persona.get("default_motivation", "You should engage with your surroundings.")
+            self.state.goal = f"You haven't responded in a while. {default_motivation}"
+            print(f"[ActionManager] Reminding of default goal: {self.state.goal}")
+            await client.send_awareness()
+        except Exception as e:
+            print(f"[ActionManager::remind_of_default_goal] Error: {e}")
 
 
 

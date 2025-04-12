@@ -31,8 +31,6 @@ async def main():
         if client is not None:
             await client.reconnect(persona_name, persona_object)
 
-   
-
     # Realtime client
     client = RealtimeClient(
         ws_url=WS_URL,
@@ -42,10 +40,6 @@ async def main():
         audio_manager=audio_manager,
         action_manager=action_manager
     )
-
-    
-    
-
 
     # Initialize function call manager
     function_call_manager = FunctionCallManager(
@@ -60,10 +54,8 @@ async def main():
     await client.connect()
 
     # 3. Start microphone capture & speaker playback tasks
-    #asyncio.create_task(asyncio.to_thread(audio_manager.capture_microphone))
     asyncio.create_task(audio_manager.visualize_audio())
 
-    # asyncio.create_task(client.capture_microphone())
     # 4. Start processing function calls and audio from GPT
     asyncio.create_task(client.process_function_calls())
     asyncio.create_task(client.process_outgoing_audio())
@@ -73,64 +65,8 @@ async def main():
     # 2. Update session with a default or chosen persona
     await client.update_session("Vektor Pulsecheck")
 
-    # 5. Example background task to watch for petting
-    async def detect_status():
-        is_change = False
-        last_change_time = 0  # Track the last time a change was noticed
-        while True:
-            try:
-                print("Volume: ", audio_manager.latest_volume)
-                # Also check if a new sound direction came in
-                # Detect individual changes
-                petting_changed = action_manager.detect_petting_change()
-                sound_changed = action_manager.detect_sound_direction_change()
-                face_changed = await action_manager.detect_face_change()
-                orientation_changed = action_manager.detect_orientation_change()
-
-                # Combine for overall change
-                is_change = petting_changed or sound_changed or face_changed or orientation_changed
-
-                # Ignore changes if within the last 5 seconds or if talking movement is active
-                current_time = time.time()
-                if is_change and (current_time - last_change_time < 5 or action_manager.isTalkingMovement):
-                    is_change = False
-
-                new_goal = ""
-
-                if is_change:
-                    new_goal = ""
-                    last_change_time = current_time  # Update the last change time
-                    if petting_changed:
-                        if (current_time - action_manager.state.petting_detected_at) < 10:
-                            new_goal = "You are being petted!"
-                        else:
-                            new_goal = "You are no longer being petted."
-                    if sound_changed:
-                        if (not action_manager.isTalkingMovement) and (audio_manager.latest_volume > 30):
-                            new_goal = f"Sound (is someone talking?) came from direction: {action_manager.state.last_sound_direction}"
-                    if face_changed:
-                        if (current_time - action_manager.state.face_detected_at) < 10:
-                            new_goal = "A face is detected!"
-                        else:
-                            new_goal = "A face is no longer detected."
-                    if orientation_changed:
-                        new_goal = action_manager.state.last_orientation_description
-
-                    if(len(new_goal) > 0):
-                        action_manager.state.goal = new_goal + " You must say and do something in reaction to this."
-                        print(f"Goal: {action_manager.state.goal}")
-                        await client.send_awareness()
-
-                await asyncio.sleep(0.3)
-                is_change = False
-            except Exception as e:
-                print(f"[detect_status] Error: {e}")
-                await asyncio.sleep(1)  # Prevent tight loop on failure
-
-
-    asyncio.create_task(detect_status())
-
-   
+    # 5. Start background task to watch for changes and remind of default goal
+    asyncio.create_task(action_manager.detect_status(audio_manager, client))
 
     # Keep running
     while True:
