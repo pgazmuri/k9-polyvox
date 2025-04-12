@@ -1,5 +1,6 @@
 import asyncio
 import time
+import signal
 from action_manager import ActionManager
 from audio_manager import AudioManager
 from function_call_manager import FunctionCallManager
@@ -16,9 +17,36 @@ headers = {
     "OpenAI-Beta": "realtime=v1"
 }
 
+# Global references for cleanup during shutdown
+action_manager = None
+audio_manager = None
+client = None
+
+async def shutdown(signal=None):
+    """Clean shutdown of services when program exits"""
+    if signal:
+        print(f"Received exit signal {signal.name}...")
+    
+    print("Shutting down...")
+    
+    # Close client connection first
+    if client:
+        print("Closing client connection...")
+        await client.close()
+    
+    # Clean up audio resources
+    if audio_manager:
+        print("Cleaning up audio resources...")
+        audio_manager.close()
+
+    print("Shutdown complete.")
+
 async def main():
+    # Make variables global so they can be accessed in shutdown handler
+    global action_manager, audio_manager, client
+    
     # Initialize PiDog actions
-    action_manager: ActionManager = ActionManager()
+    action_manager = ActionManager()
     action_manager.initialize_posture()
 
     # Initialize audio I/O
@@ -26,7 +54,6 @@ async def main():
 
     # We define a function here so function_call_manager can reconnect
     # using the RealtimeClient's logic.
-    client = None
     async def reconnect_cb(persona_name, persona_object=None):
         if client is not None:
             await client.reconnect(persona_name, persona_object)
@@ -69,8 +96,17 @@ async def main():
     asyncio.create_task(action_manager.detect_status(audio_manager, client))
 
     # Keep running
-    while True:
-        await asyncio.sleep(1)
+    try:
+        while True:
+            await asyncio.sleep(1)
+    except KeyboardInterrupt:
+        print("Keyboard interrupt received...")
+    finally:
+        await shutdown()
 
 if __name__ == "__main__":
+    # Register signal handlers for graceful shutdown
+    for sig in (signal.SIGINT, signal.SIGTERM):
+        signal.signal(sig, lambda s, _: asyncio.create_task(shutdown(s)))
+    
     asyncio.run(main())

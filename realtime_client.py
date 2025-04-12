@@ -188,36 +188,44 @@ class RealtimeClient:
 
     async def process_outgoing_audio(self):
         """
-        Continuously poll the AudioManager's outgoing queue.
-        Aggregate and process all available chunks in the queue.
+        Continuously process audio data from the AudioManager's outgoing queue.
+        Uses proper async await patterns for processing.
         """
         print("[RealtimeClient] Starting outgoing audio processing...")
         while True:
             try:
-                # Process all available chunks in the queue
-                while not self.audio_manager.outgoing_data_queue.empty():
-                    audio_data = self.audio_manager.outgoing_data_queue.get()
-    
-                    # Resample audio from 48kHz to 24kHz
-                    resampled_data = resampy.resample(audio_data, 48000, 24000)
-                    resampled_bytes = resampled_data.astype(np.int16).tobytes()
-    
-                    # Encode the resampled audio to base64
-                    chunk_base64 = base64.b64encode(resampled_bytes).decode('utf-8')
-    
+                # Use await with a timeout to avoid blocking indefinitely
+                try:
+                    # Try to get an item with a short timeout
+                    resampled_bytes = await asyncio.wait_for(
+                        self.audio_manager.outgoing_data_queue.get(), 
+                        timeout=0.01
+                    )
+                    
+                    # Audio is already resampled in AudioManager, so we just need to encode it
+                    # Base64 encode the audio
+                    chunk_base64 = await asyncio.to_thread(
+                        lambda: base64.b64encode(resampled_bytes).decode('utf-8')
+                    )
+                    
                     # Send the chunk to the server
-                    asyncio.create_task(self.send("input_audio_buffer.append", {"audio": chunk_base64}))
-                    asyncio.sleep(0.0001)
-                    # Save the audio asynchronously
-                    #asyncio.create_task(asyncio.to_thread(self.save_microphone_audio, resampled_bytes))
-    
-                # Small delay to avoid busy-waiting
-                await asyncio.sleep(0.01)
-    
+                    await self.send("input_audio_buffer.append", {"audio": chunk_base64})
+                    
+                    # Optional: Indicate task completion
+                    self.audio_manager.outgoing_data_queue.task_done()
+                    
+                    # Optional: Save microphone audio for debugging
+                    # self.save_microphone_audio(resampled_bytes)
+                    
+                except asyncio.TimeoutError:
+                    # No data available, just continue the loop
+                    pass
+                    
+                # Yield control back to the event loop
+                await asyncio.sleep(0)
             except Exception as e:
                 print(f"[RealtimeClient] Error in process_outgoing_audio: {e}")
-                # Small sleep before retrying
-                await asyncio.sleep(1)
+                await asyncio.sleep(1)  # Wait before retrying after an error
 
     async def process_function_calls(self):
         """
