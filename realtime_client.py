@@ -53,6 +53,7 @@ class RealtimeClient:
         asyncio.create_task(self.send_awareness())
         
     async def send_awareness(self):
+        print("[RealtimeClient] Sending awareness status...")
         asyncio.sleep(0.1)
         await self.send("response.create", {
             "response": {
@@ -282,6 +283,10 @@ class RealtimeClient:
         for p in personas:
             persona_descriptions.append(f"- {p['name']}: {p['description']}")
         
+        # Pre-format strings to avoid issues with backslashes inside f-string expressions
+        persona_list_str = "\n".join(persona_descriptions)
+        available_actions_str = json.dumps(available_actions)
+
         session_config = {
             "session": {
                 "modalities": ["text", "audio"],
@@ -297,11 +302,11 @@ Embody the persona detailed below. Follow its personality, speaking style, and m
 
 # Available Personas:
 The following personas are available for switching via the `switch_persona` function:
-{"\n".join(persona_descriptions)}
+{persona_list_str}
 
 # Actions are Key:
 - Use the `perform_action` function frequently to make the robot dog move, express itself, and interact physically. This is crucial for bringing the persona to life.
-- Available actions: {json.dumps(available_actions)}
+- Available actions: {available_actions_str}
 - You can combine actions with commas (e.g., 'walk_forward,wag_tail').
 - Aim to include relevant actions in most of your responses. Talk before and after actions to make interactions feel natural.
 - Use 'nod' and 'shake_head' actions to show agreement or disagreement.

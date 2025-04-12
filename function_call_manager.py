@@ -1,7 +1,5 @@
 import json
 import sys # For quitting the program
-from persona_generator import generate_persona
-from preset_actions import speak
 
 class FunctionCallManager:
     """
@@ -68,14 +66,8 @@ class FunctionCallManager:
             elif func_name == 'create_new_persona':
                 arguments = json.loads(function_call['arguments'])
                 persona_description = arguments.get("persona_description", None)
-                music = speak(self.action_manager.my_dog, "audio/angelic_ascending.mp3")
-                self.action_manager.lightbar_boom('white')
-                new_persona = await generate_persona(persona_description)
-                await self.client.reconnect(new_persona['name'], new_persona)
-                music.music_stop()
-                self.lightbar_breath()
-                print(f"[FunctionCallManager] Creating new persona: {persona_description}")
-                result = "success"
+                print(f"[FunctionCallManager] Requesting ActionManager to create new persona: {persona_description}")
+                result = await self.action_manager.create_new_persona_action(persona_description, self.client)
                 return result
 
             elif func_name == 'perform_action':
@@ -90,12 +82,8 @@ class FunctionCallManager:
                 arguments = json.loads(function_call['arguments'])
                 persona_name = arguments.get("persona_name", "Vektor Pulsecheck")
                 print(f"[FunctionCallManager] Switching persona to: {persona_name}")
-                # Force a reconnect with a new persona
-                self.action_manager.lightbar_boom('green')
-                music = speak(self.action_manager.my_dog, "audio/angelic_short.mp3")
-                await self.reconnect(persona_name)
-                music.music_stop()
-                self.lightbar_breath()
+                # Call the new method in ActionManager to handle effects and reconnect
+                await self.action_manager.handle_persona_switch_effects(self.reconnect, persona_name)
                 result = "persona_switched"
                 print(f"[FunctionCallManager] Result of 'switch_persona': {result}")
                 return result

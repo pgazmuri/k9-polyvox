@@ -428,7 +428,7 @@ def speak(my_dog, name, volume=100):
             return False
         return music
 
-async def talk(my_dog, pitch_comp=-15, amplitude=4, duration=1.5, speed=85, fps=8):
+async def talk(my_dog, pitch_comp=-15, amplitude=4, duration=1.5, speed=85, fps=10):
     # Get the current head position
     current_head_position = my_dog.head_current_angles
     current_y, current_r, current_p = current_head_position
@@ -454,6 +454,9 @@ async def talk(my_dog, pitch_comp=-15, amplitude=4, duration=1.5, speed=85, fps=
         angs.append([y + y_jitter, r, p + p_jitter])
 
     my_dog.head_move_raw(angs, speed=speed)
+    await wait_head_done(my_dog)
+    #place the head back to where it was to begin with
+    my_dog.head_move_raw([[current_y, current_r, current_p]], speed=speed)
     await wait_head_done(my_dog)
 
 async def wait_head_done(my_dog):
