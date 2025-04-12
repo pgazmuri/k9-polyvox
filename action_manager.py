@@ -604,8 +604,20 @@ class ActionManager:
             await self.perform_action("look_down_right")
         else:
             await self.perform_action("look_forward")
-            
-        
+
+    def get_available_actions(self):
+        """Returns the list of all available actions the robot dog can perform."""
+        return [
+            "wag_tail", "bark", "bark_harder", "pant", "howling", "stretch", "push_up",
+            "scratch", "handshake", "high_five", "lick_hand", "shake_head", "relax_neck",
+            "nod", "think", "recall", "look_down", "look_up", "look_down_left", "look_down_right",
+            "look_up_left", "look_up_right", "look_forward", "look_left", "look_right", 
+            "fluster", "surprise", "alert", "attack_posture", "body_twisting", "feet_shake", 
+            "sit_2_stand", "bored", "walk_forward", "walk_backward", "lie", "stand", "sit",
+            "walk_left", "walk_right", "tilt_head_left", "tilt_head_right", "doze_off"
+        ]
+
+
 
 
 

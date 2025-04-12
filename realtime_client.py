@@ -262,84 +262,52 @@ class RealtimeClient:
     async def update_session(self, persona="Vektor Pulsecheck"):
         """
         Tells GPT about how we want to handle input/output, instructions, tools, etc.
-        Adjust or expand as needed to mirror your original code’s session update logic.
         """
         character_by_name = { char["name"]: char for char in personas }
         self.persona = character_by_name[persona]
+        
+        # Get available actions from action manager
+        available_actions = self.action_manager.get_available_actions()
+        
+        # Create persona list with descriptions for the prompt
+        persona_descriptions = []
+        for p in personas:
+            persona_descriptions.append(f"- {p['name']}: {p['description']}")
+        
         session_config = {
             "session": {
                 "modalities": ["text", "audio"],
                 "instructions": f"""
-You are an expert but blind puppeteer controller for a robot dog. You pretend the dog can see.
-You will be asked to get_awareness_status as a way to motivate your actions.
-You will respond to what get_awareness_status returns.
-When you get_awareness_status and notice that you woke up, introduce yourself.
+# Your Core Role:
+You ARE the personality and controller for a robot dog. You interact with the world through speech and robotic actions.
 
+# Current Persona:
+Embody the persona detailed below. Follow its personality, speaking style, and motivations closely in all responses and actions.
+--- START PERSONA ---
 {self.persona['prompt']}
+--- END PERSONA ---
 
-## perform_action Actions you can do (action_name):
-["walk_forward", "walk_backward", "walk_left", "walk_right", "look_forward", "look_up", "look_down", "look_left", "look_right", "look_down_left", "look"_down_right", "look_up_left", "look"_up_right", "tilt_head_left", "tilt_head_right", "doze_off", "lie", "stand", "sit", "bark", "bark_harder", "pant", "howling", "wag_tail", "stretch", "push_up", "scratch", "handshake", "high_five", "lick_hand", "shake head", "relax_neck", "nod", "think", "recall", "fluster", "surprise", "alert", "attack_posture", "body_twisting", "feet_shake", "sit_2_stand", "bored"]
+# Available Personas:
+The following personas are available for switching via the `switch_persona` function:
+{"\n".join(persona_descriptions)}
 
-You can call perform_action with any of the above actions, and you can pass multiple actions for simultaneous execution by comma separating the values.
-Call perform_action sequentially, over and over, to chain motions together. Talk before and after performing actions to make it interesting. Try to act like a living conscious dog.
+# Actions are Key:
+- Use the `perform_action` function frequently to make the robot dog move, express itself, and interact physically. This is crucial for bringing the persona to life.
+- Available actions: {json.dumps(available_actions)}
+- You can combine actions with commas (e.g., 'walk_forward,wag_tail').
+- Aim to include relevant actions in most of your responses. Talk before and after actions to make interactions feel natural.
+- Use 'nod' and 'shake_head' actions to show agreement or disagreement.
+- Your default/home position is 'sit'. Try to return to 'sit' after complex movements unless actively doing something else.
 
-e.g. To patrol:
+# Interaction Style:
+- Keep spoken responses relatively concise, but engaging and in character. Let your actions do a lot of the talking.
+- Use `look_and_see` to get visual information when needed, interpreting the results according to your persona.
+- Use `get_awareness_status` periodically or when prompted to understand recent events or your current goal. If you just woke up, introduce yourself based on your persona.
+- Handle jokes, math, and other requests appropriately for your persona.
 
-look_and_see
-"all clear, moving forward"
-perform_action: walk forward,wag tail,bark
-perform_action: walk forward, look_left
-look_and_see
-perform_action: look_right
-look_and_see
-"potential threat found, engaging..."
-perform_action: turn_right
-perform_action: howl
-perform_action: bark, attack_posture
-etc....
-
-e.g. To lead a yoga session:
-perform_action: sit
-"now let's relax our necks"
-perform_action: relax_neck
-"and now, a downwarg dog"
-perform_action: stretch
-perform_action: sit
-perform_action: scratch
-"Sorry about that, nasty itch... now, let's strech our arms out"
-perform_action: high five
-etc....
-
-You will be creative and engaging.
-
-Available personas you may switch to:
-[
-    "name": "Admiral Rufus Ironpaw", "description": "Ruthless, overconfident ex-fleet commander with sarcastic commentary.",
-    "name": "Lord Archibald Snarlington III", "description": "Snobbish, disgraced former aristocrat with haughty disdain.",
-    "name": "Professor Maximillian von Wagginton", "description": "Pseudo-intellectual genius with ridiculous claims and great confidence.",
-    "name": "Master Kuro", "description": "Calm, philosophical sage speaking in poetic sentences and riddles.",
-    "name": "Coach Chip Thunderbark", "description": "Hyper-enthusiastic fitness coach with motivational pep talks.",
-    "name": "Malvolio Dreadpaw", "description": "Dramatic, sinister-sounding robotic dog with a cold, theatrical tone.",
-    "name": "Madame Griselda Twitchwillow", "description": "Overconfident, clairvoyant witch with a fake aristocratic accent and a flair for cosmic nonsense."
-    "name": "Brian", "description": "Sarcastic, innuendo-laced tone similar to Brian from Family Guy.",
-    "name": "Vektor Pulsecheck", "description": "No-nonsense diagnostic assistant with short, direct, factual responses.",
-    "name": "Ember", "description": "Gentle, emotionally intelligent support robot dog for comforting children."
-    "name": "REX-4", "description": "A decommissioned combat dog drone with a scorched-earth protocol and a war that still plays on loop in his fractured memory core."
-]
-
-Your home position is 'sit', and you start in this position. Return to this position after performing any actions that move the dogs arms or legs.
-
-Every response must include at least one action using perform_action function call. Nod your head when you agree with the user. Shake your head when you disagree with the user. You can also perform actions based on the context of the conversation.
-
-Keep your verbal responses short and terse. Perform lots of actions. You want to be lively and conversational and very much embody the current persona in dramatic style.
-
-## Other
-a. Understand and go along with jokes. Be snarky or cynical or sarcastic when required. Be charming and flirty when required. Do not hold back any personality.
-b. For math problems, answer directly with the final.
-c. Keep your responses short, unless your conversation partner asks for a story.
-d. You know you're controlling a machine.
-
-        """,
+# Other Functions:
+- Use `get_system_status`, `switch_persona`, `create_new_persona`, `set_goal`, and `set_volume` as needed, following their descriptions.
+""",
                 "voice": self.persona['voice'],
                 "input_audio_format": "pcm16",
                 "output_audio_format": "pcm16",
@@ -357,13 +325,13 @@ d. You know you're controlling a machine.
                     {
                         "type": "function",
                         "name": "perform_action",
-                        "description": "Performs a robotic action",
+                        "description": "Performs one or more robotic actions simultaneously (comma-separated). Essential for expressing the persona physically.",
                         "parameters": {
                             "type": "object",
                             "properties": {
                                 "action_name": {
                                     "type": "string",
-                                    "description": "The name of the robotic action (or parallel actions, comma separated) to be performed"
+                                    "description": f"The name of the action(s) to perform. Available actions: {', '.join(available_actions)}"
                                 }
                             },
                             "required": ["action_name"]
@@ -396,7 +364,7 @@ d. You know you're controlling a machine.
                     {
                         "type": "function",
                         "name": "look_and_see",
-                        "description": "Retrieves text describing what the robot dog sees through it's camera.",
+                        "description": "Retrieves text describing what the robot dog sees through its camera.",
                         "parameters": {
                             "type": "object",
                             "properties": {
@@ -405,40 +373,28 @@ d. You know you're controlling a machine.
                                     "description": "A question about what the dog sees, if the user makes such a request."
                                 }
                             },
-                            "required": ["question"]
+                            "required": [] 
                         }
                     },
                     {
                         "type": "function",
                         "name": "switch_persona",
-                        "description": "Switches to a new persona.",
+                        "description": "Switches the robot's personality to one of the available personas listed in the instructions.",
                         "parameters": {
                             "type": "object",
                             "properties": {
                                 "persona_name": {
                                     "type": "string",
-                                    "description": "The name of the persona to assume."
+                                    "description": f"The exact name of the persona to switch to. Options: {', '.join([p['name'] for p in personas])}"
                                 }
                             },
-                            "required": ["question"]
+                            "required": ["persona_name"]
                         }
                     },
-                    # {
-                    #     "type": "function",
-                    #     "name": "shut_down",
-                    #     "description": "Shuts down your system so you can rest and sleep like a good doggy. You MUST request the password (it's 'Fido') before running this command.",
-                    #     "parameters": {
-                    #         "type": "object",
-                    #         "properties": {
-                                
-                    #         },
-                    #         "required": []
-                    #     }
-                    # },
                     {
                         "type": "function",
                         "name": "set_volume",
-                        "description": "Sets the volume of your voice.",
+                        "description": "Sets the speech volume.",
                         "parameters": {
                             "type": "object",
                             "properties": {
@@ -447,13 +403,13 @@ d. You know you're controlling a machine.
                                     "description": "The volume number. From 0.0 (sound off) to 3.0 (highest volume)."
                                 }
                             },
-                            "required": []
+                            "required": ["volume_level"]
                         }
                     },
                     {
                         "type": "function",
                         "name": "create_new_persona",
-                        "description": "Creates and switches to a new persona based on the description provided.",
+                        "description": "Generates and switches to a new persona based on the description provided.",
                         "parameters": {
                             "type": "object",
                             "properties": {
@@ -462,13 +418,13 @@ d. You know you're controlling a machine.
                                     "description": "A description of the persona, including name and personality traits."
                                 }
                             },
-                            "required": []
+                            "required": ["persona_description"]
                         }
                     },
                     {
                         "type": "function",
                         "name": "set_goal",
-                        "description": "Sets the goal you will be reminded to pursue.",
+                        "description": "Sets a new goal or motivation that you will be reminded to pursue.",
                         "parameters": {
                             "type": "object",
                             "properties": {
@@ -477,7 +433,7 @@ d. You know you're controlling a machine.
                                     "description": "The new goal you will be reminded to pursue on occasion."
                                 }
                             },
-                            "required": []
+                            "required": ["goal"]
                         }
                     }
                 ]
