@@ -193,10 +193,9 @@ class AudioManager:
             if not self.incoming_data_queue.empty() and not self.action_manager.isTalkingMovement:
                 # Signal that we're starting to talk
                 self.action_manager.isTalkingMovement = True
-                # Use loop.call_soon_threadsafe if we need to start an async task
-                asyncio.get_event_loop().call_soon_threadsafe(
-                    lambda: asyncio.create_task(self.action_manager.start_talking())
-                )
+                # Use loop.call_soon_threadsafe if we need to start an async task from a different thread
+                self.loop.call_soon_threadsafe(asyncio.create_task, self.action_manager.start_talking())
+                
     
             # Fill the buffer with data from the queue
             while len(self._audio_buffer) < expected_size and not self.incoming_data_queue.empty():
@@ -218,9 +217,8 @@ class AudioManager:
                 if self.action_manager.isTalkingMovement:
                     self.action_manager.isTalkingMovement = False
                     # Use loop.call_soon_threadsafe to call async functions from this thread
-                    asyncio.get_event_loop().call_soon_threadsafe(
-                        lambda: asyncio.create_task(self.action_manager.stop_talking())
-                    )
+                    self.loop.call_soon_threadsafe(asyncio.create_task, self.action_manager.stop_talking())
+                    
     
             # Scale the audio data
             audio_data_np = np.frombuffer(audio_chunk, dtype=np.int16)

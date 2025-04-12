@@ -25,7 +25,7 @@ client = None
 async def shutdown(signal=None):
     """Clean shutdown of services when program exits"""
     if signal:
-        print(f"Received exit signal {signal.name}...")
+        print(f"Received exit signal...")
     
     print("Shutting down...")
     
@@ -46,7 +46,7 @@ async def main():
     global action_manager, audio_manager, client
     
     # Initialize PiDog actions
-    action_manager: ActionManager = ActionManager()
+    action_manager = ActionManager()
 
     # Initialize audio I/O
     audio_manager = AudioManager(action_manager=action_manager)
@@ -80,7 +80,7 @@ async def main():
     await client.connect()
 
     # 3. Start microphone capture & speaker playback tasks
-    asyncio.create_task(audio_manager.visualize_audio())
+    #asyncio.create_task(audio_manager.visualize_audio())
 
     # 4. Start processing function calls and audio from GPT
     asyncio.create_task(client.process_function_calls())
@@ -107,8 +107,8 @@ async def main():
         await shutdown()
 
 if __name__ == "__main__":
-    # Register signal handlers for graceful shutdown
-    for sig in (signal.SIGINT, signal.SIGTERM):
-        signal.signal(sig, lambda s, _: asyncio.create_task(shutdown(s)))
+    # # Register signal handlers for graceful shutdown
+    # for sig in (signal.SIGINT, signal.SIGTERM):
+    #     signal.signal(sig, lambda s, _: asyncio.create_task(shutdown(s)))
     
     asyncio.run(main())
