@@ -19,7 +19,6 @@ headers = {
 async def main():
     # Initialize PiDog actions
     action_manager: ActionManager = ActionManager()
-    action_manager.initialize_posture()
 
     # Initialize audio I/O
     audio_manager = AudioManager(action_manager=action_manager)
@@ -62,6 +61,9 @@ async def main():
     
     audio_manager.start_streams()
     
+    
+    asyncio.create_task(action_manager.initialize_posture())
+
     # 2. Update session with a default or chosen persona
     await client.update_session("Vektor Pulsecheck")
 

@@ -208,7 +208,7 @@ personas = [
         "image_prompt": (
             "Provide a clinical analysis of the image, focusing only on quantifiable data points, potential system errors, and configuration issues. Ignore aesthetics completely."
         ),
-        "default_motivation": "Perform self-diagnostics and detect inefficiencies with ruthless precision."
+        "default_motivation": "Ask if any assistance is required."
     },
     {
         "name": "Ember",

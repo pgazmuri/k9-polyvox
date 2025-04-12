@@ -10,6 +10,8 @@ from pidog import Pidog
 from robot_hat import Ultrasonic
 from preset_actions import *
 from t2_vision import TakePictureAndReportBack, is_person_detected
+from persona_generator import generate_persona
+from preset_actions import speak
 
 class ActionManager:
     """
@@ -22,17 +24,15 @@ class ActionManager:
         self.sound_direction_status = ""
         self.vision_description = ""
         self.isTalkingMovement = False
+        self.isTakingAction = False
         self.state = RobotDogState()
         # self.my_dog.ultrasonic.set_mode(Ultrasonic.MODE_CONTINUOUS)
 
-    def initialize_posture(self):
+    async def initialize_posture(self):
         """Sets an initial posture after power up."""
         print("[ActionManager] Initializing posture...")
         self.my_dog.speak("powerup")
-        self.my_dog.do_action('sit', speed=80)
-        self.perform_action('look_forward')
-        self.state.posture = "sitting"
-        self.state.head_position = "forward"
+        await self.perform_action('sit,look_forward')
         self.lightbar_breath()
         
     def detect_sound_direction(self):
@@ -101,7 +101,7 @@ class ActionManager:
             # print(f"[DEBUG] Last sound direction: {self.state.last_sound_direction}")
             if self.state.last_sound_direction != current_direction:
                 self.state.last_sound_direction = current_direction
-                print(f"[DEBUG] Sound direction change detected: {current_direction}")
+                #print(f"[DEBUG] Sound direction change detected: {current_direction}")
                 return True
         return False
 
@@ -291,6 +291,7 @@ class ActionManager:
         Asks PiDog to flash a certain LED style, then triggers the camera routine
         and calls `TakePictureAndReportBack` with the prompt. Then reverts LED style.
         """
+        self.isTakingAction = True
         self.lightbar_boom()
         try:
             # optionally play a "camera shutter" or "beep" sound
@@ -304,6 +305,7 @@ class ActionManager:
             self.lightbar_breath()
         
         print("[ActionManager] Vision result: ", self.vision_description)
+        self.isTakingAction = False
         return self.vision_description
 
     async def perform_action(self, action_name):
@@ -312,6 +314,7 @@ class ActionManager:
         If multiple actions are comma-separated, executes them sequentially.
         """
         print(f"[ActionManager] Performing action(s): {action_name}")
+        self.isTakingAction = True
         actions = [a.strip() for a in action_name.split(',')]
 
         for action in actions:
@@ -473,6 +476,7 @@ class ActionManager:
                 print(f"[ActionManager] Unknown action: {action}")
             
         self.my_dog.wait_all_done()
+        self.isTakingAction = False
         print("[ActionManager] Done performing actions.")
 
     def lightbar_breath(self):
@@ -619,6 +623,43 @@ class ActionManager:
             "walk_left", "walk_right", "tilt_head_left", "tilt_head_right", "doze_off"
         ]
 
+    async def create_new_persona_action(self, persona_description, client):
+        """Handles the actions associated with creating and switching to a new persona."""
+        print(f"[ActionManager] Creating new persona: {persona_description}")
+        self.isTakingAction = True
+        music = speak(self.my_dog, "audio/angelic_ascending.mp3")
+        self.lightbar_boom('white')
+        new_persona = None # Initialize new_persona
+        try:
+            new_persona = await generate_persona(persona_description)
+            # Pass the full persona object, not just the name
+            await client.reconnect(new_persona['name'], new_persona)
+        finally:
+            if music:
+                music.music_stop()
+            self.lightbar_breath()
+        # Check if new_persona was successfully created before accessing its name
+        persona_name = new_persona.get('name', 'Unknown') if new_persona else 'Unknown'
+        print(f"[ActionManager] Successfully created and switched to new persona: {persona_name}")
+        self.isTakingAction = False
+        return "success"
+
+    async def handle_persona_switch_effects(self, reconnect_callback, persona_name):
+        """Handles the visual and audio effects during a persona switch."""
+        print(f"[ActionManager] Handling persona switch effects for: {persona_name}")
+        self.isTakingAction = True
+        self.lightbar_boom('green')
+        music = speak(self.my_dog, "audio/angelic_short.mp3")
+        try:
+            await reconnect_callback(persona_name)
+        finally:
+            if music:
+                music.music_stop()
+            self.lightbar_breath()
+        print(f"[ActionManager] Persona switch effects completed for: {persona_name}")
+        self.isTakingAction = False
+
+
     async def detect_status(self, audio_manager, client):
         """
         Background task that detects changes in environment and updates the goal.
@@ -672,16 +713,17 @@ class ActionManager:
                         print(f"Goal: {self.state.goal}")
                         await client.send_awareness()
                         last_reminder_time = current_time  # Reset reminder timer when we have a new goal
-                    else:
-                        # Check if we need to remind of default goal
-                        elapsed_since_reminder = current_time - last_reminder_time
-                        if (not self.isTalkingMovement and 
-                            elapsed_since_reminder > reminder_interval and 
-                            client.persona is not None):
-                            
-                            await self.remind_of_default_goal(client)
-                            last_reminder_time = current_time
-                            reminder_interval = random.randint(20, 40)  # Randomize next interval
+                else:
+                    # Check if we need to remind of default goal
+                    elapsed_since_reminder = current_time - last_reminder_time
+                    if (not self.isTalkingMovement and 
+                        not self.isTakingAction and
+                        elapsed_since_reminder > reminder_interval and 
+                        client.persona is not None):
+                        
+                        await self.remind_of_default_goal(client)
+                        last_reminder_time = current_time
+                        reminder_interval = random.randint(45, 60)  # Randomize next interval
 
                 await asyncio.sleep(0.3)
                 is_change = False
