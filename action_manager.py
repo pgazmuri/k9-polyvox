@@ -214,21 +214,26 @@ class ActionManager:
         """
         status_parts = []
 
+        # Goal
+        status_parts.append(f"Current Goal: {self.state.goal}")
+
+        # Petting Status
         if self.my_dog.dual_touch.read() != 'N':
             status_parts.append("Someone is petting my head RIGHT NOW!")
         elif self.state.petting_detected_at and time.time() - self.state.petting_detected_at < 10:
             status_parts.append("Someone petted my head recently!")
 
-        person_detected = is_person_detected()
-        #if a person is detected, write a status that there is a person in front of you
-        if person_detected:
-            status_parts.append("A person is in front of you!")
-        elif self.state.face_detected_at and time.time() - self.state.face_detected_at < 10:
-            status_parts.append("A person was just in front of you!")
+        # Face Detection Status (from state)
+        person_detected_recently = self.state.face_detected_at and (time.time() - self.state.face_detected_at < 10)
+        if person_detected_recently:
+             # We can refine this further if needed, e.g., differentiate between "right now" vs "recently"
+             # For now, just indicate recent detection based on state.
+            status_parts.append("A person was detected recently!")
         else:
-            status_parts.append("No person in front of you (that we can detect).")
+            status_parts.append("No person detected recently.")
 
-        # Report on posture and head position
+
+        # Report on posture and head position from state
         status_parts.append(f"Posture: {self.state.posture}")
         status_parts.append(f"Head Position: {self.state.head_position}")
 
@@ -239,31 +244,32 @@ class ActionManager:
         # Body pitch, roll, and yaw from IMU
         ax, ay, az = self.my_dog.accData  # Accelerometer data
         gx, gy, gz = self.my_dog.gyroData  # Gyroscope data
-        
+
         # Calculate pitch and roll from accelerometer
         body_pitch = math.atan2(ay, math.sqrt(ax**2 + az**2)) * 180 / math.pi
         body_roll = math.atan2(-ax, az) * 180 / math.pi
-        
+
         # Yaw requires integration of gyroscope data over time
         dt = 0.01  # Example time delta in seconds (adjust based on your loop timing)
         if not hasattr(self, 'yaw_angle'):
             self.yaw_angle = 0.0  # Initialize yaw angle if not already set
         self.yaw_angle += gz * dt  # Integrate gyroscope Z-axis data for yaw
         body_yaw = self.yaw_angle
-        
+
         # Append IMU status to status_parts
         status_parts.append(f"Body Pitch: {body_pitch:.2f}°")
         status_parts.append(f"Body Roll: {body_roll:.2f}°")
         status_parts.append(f"Body Yaw: {body_yaw:.2f}°")
 
-        status_parts.append(f"Your orientation: {self.get_orientation_description()}")
+        # Report orientation from state
+        orientation_desc = self.state.last_orientation_description if self.state.last_orientation_description else self.get_orientation_description() # Fallback if state is None
+        status_parts.append(f"Your orientation: {orientation_desc}")
 
         # Gyroscope angular velocity
         status_parts.append(f"Gyro Angular Velocity: gx={gx:.2f}, gy={gy:.2f}, gz={gz:.2f}")
 
         # Distance Sensor
         try:
-            # us = new Ultrasonic()
             distance = self.my_dog.distance
             distance = round(distance, 2)
             status_parts.append(f"Space in front of you: {distance} cm (ultrasonic distance)")
@@ -272,16 +278,16 @@ class ActionManager:
         except Exception as e:
             status_parts.append(f"Error reading ultrasonic sensor: {str(e)}")
 
-        # Sound direction
-        status_parts.append(f"Last Sound Direction: {self.state.last_sound_direction}")
+        # Sound direction from state
+        status_parts.append(f"Last Sound Direction: {self.state.last_sound_direction if self.state.last_sound_direction else 'None detected yet'}")
 
         # System status
         cpu_usage = psutil.cpu_percent(interval=1)
         memory_info = psutil.virtual_memory()
         disk_info = psutil.disk_usage('/')
         top_processes = sorted(
-            psutil.process_iter(['pid', 'name', 'cpu_percent']), 
-            key=lambda p: p.info['cpu_percent'], 
+            psutil.process_iter(['pid', 'name', 'cpu_percent']),
+            key=lambda p: p.info['cpu_percent'],
             reverse=True
         )[:5]
 
@@ -290,7 +296,7 @@ class ActionManager:
         status_parts.append(f"Disk Usage: {disk_info.percent}%")
 
         top_procs_info = ", ".join(
-            [f"{proc.info['name']} (PID {proc.info['pid']}): {proc.info['cpu_percent']}%" 
+            [f"{proc.info['name']} (PID {proc.info['pid']}): {proc.info['cpu_percent']}%"
              for proc in top_processes]
         )
         status_parts.append(f"Top Processes: {top_procs_info}")
@@ -759,22 +765,26 @@ class ActionManager:
 
                 if is_change and (not self.isTalkingMovement):
                     new_goal = ""
+                    new_status_update = ""
                     last_change_time = current_time  # Update the last change time
                     if petting_changed:
                         if (current_time - self.state.petting_detected_at) < 10:
                             new_goal = "You are being petted!  You must say and do something in reaction to this."
-                        # else:
-                        #     new_goal = "You are no longer being petted."
-                    # if sound_changed:
-                    #     if (audio_manager.latest_volume > 30):
-                    #         new_goal = f"Sound (is someone talking?) came from direction: {self.state.last_sound_direction}. You don't need to react to this if someone is talking..."
+                        else:
+                            new_status_update = "You are no longer being petted."
+                    if sound_changed:
+                        if (audio_manager.latest_volume > 30):
+                            new_status_update = f"Sound (is someone talking?) came from direction: {self.state.last_sound_direction}. You don't need to react to this if someone is talking..."
                     if face_changed:
                         if (current_time - self.state.face_detected_at) < 10:
                             new_goal = f"A face is detected! You are looking {self.state.head_position}. You must say and do something in reaction to this."
-                        # else:
-                        #     new_goal = f"A face is no longer detected. You are looking {self.state.head_position}"
+                        else:
+                            new_status_update = f"A face is no longer detected. You are looking {self.state.head_position}"
                     if orientation_changed:
                         new_goal = self.state.last_orientation_description
+
+                    if(len(new_status_update) > 0):
+                        await client.send_text_message(new_status_update)
 
                     if(len(new_goal) > 0):
                         self.state.goal = new_goal

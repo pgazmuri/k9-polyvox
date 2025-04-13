@@ -113,6 +113,11 @@ class AudioManager:
         if self.input_stream is None or self.output_stream is None:
             print("[AudioManager] One or both streams failed to initialize. Please check the configuration.")
 
+    def clear_audio_buffer(self):
+        with self.incoming_data_queue.mutex:
+            # Clear the incoming data queue
+            self.incoming_data_queue.queue.clear()
+
     def audio_input_callback(self, in_data, frame_count, time_info, status):
         audio_data = np.frombuffer(in_data, dtype=np.int16)
 
@@ -130,7 +135,7 @@ class AudioManager:
         # print(f"[AudioManager] Running average volume: {self.latest_volume}")
 
         try:
-            if not self.action_manager.isTalkingMovement:
+            if True: #not self.action_manager.isTalkingMovement:
                 # Resample from input_rate (48kHz) to output_rate (24kHz) right here
                 resampled_data = resampy.resample(audio_data, self.input_rate, self.output_rate)
                 resampled_bytes = resampled_data.astype(np.int16).tobytes()

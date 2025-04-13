@@ -141,8 +141,20 @@ class RealtimeClient:
                         # GPT wants to call a function with these arguments
                         self.function_call_queue.put_nowait(response)
 
+                    elif msg_type =='input_audio_buffer.speech_started':
+                        # GPT has started listening
+                        print("[RealtimeClient] GPT noticed someone is talking, and GPT is listening...")
+                        #clear audio buffer
+                        self.audio_manager.clear_audio_buffer()
+                    
                     elif msg_type == 'error':
                         print(f"[RealtimeClient] Error response: {response}")
+
+
+                    else:
+                        # Handle other message types
+                        print(f"[RealtimeClient] Unknown message type: {msg_type}")
+                        print(f"[RealtimeClient] Message content: {response}")
 
                 except Exception as e:
                     print(f"[RealtimeClient] Error parsing message: {e}")
@@ -266,6 +278,23 @@ class RealtimeClient:
         # This is usually expected after a function call output
         await self.send("response.create", {})
 
+    async def send_text_message(self, text):
+        """
+        Send a text message to the server.
+        """
+        await self.send("conversation.item.create", {
+            "item": {
+                "type": "message",
+                "role": "user",
+                "content": [
+                    {
+                        "type": "input_text",
+                        "text": text,
+                    }
+                ]
+            }
+        })
+
     async def update_session(self, persona="Vektor Pulsecheck"):
         """
         Tells GPT about how we want to handle input/output, instructions, tools, etc.
@@ -324,10 +353,10 @@ The following personas are available for switching via the `switch_persona` func
                 "output_audio_format": "pcm16",
                 "input_audio_transcription": {"model": "whisper-1"},
                 "turn_detection": {
-                    "type": "server_vad",
-                    "threshold": 0.3,
-                    "prefix_padding_ms": 300,
-                    "silence_duration_ms": 500,
+                    "type": "semantic_vad",
+                    # "threshold": 0.3,
+                    # "prefix_padding_ms": 300,
+                    # "silence_duration_ms": 500,
                 },
                 "temperature": 0.6,
                 "max_response_output_tokens": 4096,

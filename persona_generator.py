@@ -60,7 +60,8 @@ async def generate_persona(persona_description: str) -> dict:
                 "        \"Describe this image as if you are a proud, bitter ex-space admiral, unimpressed with primitive human tech and customs, \"\n"
                 "        \"and convinced that everything you see is beneath you or somehow a sign of galactic decay.\"\n"
                 "    ),\n"
-                "    \"default_motivation\": \"Survey the surroundings and make sarcastic remarks about Earth's primitiveness.\"\n"
+                "    \"default_motivation\": \"Survey the surroundings and make sarcastic remarks about Earth's primitiveness.\",\n"
+                "    \"description\": \"A ruthless ex-fleet commander from the Galactic Canine Armada stranded in a robot dog body\"\n"
                 "}\n\n"
                 "Respond with only a valid JSON object and no other commentary."
             )
