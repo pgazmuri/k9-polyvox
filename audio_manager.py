@@ -50,7 +50,28 @@ class AudioManager:
            audio_chunk = audio_bytes[i:i+self.chunk_size]  # Split into chunks
            self.incoming_data_queue.put(audio_chunk)
         #print("Enqueued audio")
-        
+
+    def stop_streams(self):
+        """Stop both input and output streams."""
+        if self.input_stream:
+            self.input_stream.stop_stream()
+            self.input_stream.close()
+            self.input_stream = None
+        if self.output_stream:
+            self.output_stream.stop_stream()
+            self.output_stream.close()
+            self.output_stream = None
+        print("[AudioManager] Streams stopped.")
+        # Reset the dropped frames counter
+        self.dropped_frames = 0
+        # Reset the volume history
+        self.volume_history = []
+        self.latest_volume = 0
+        self.action_manager.isTalkingMovement = False
+        # Reset the audio queueues
+        self.incoming_data_queue = Queue()
+        self.outgoing_data_queue = asyncio.Queue(maxsize=100)
+        print("[AudioManager] Queues cleared.")    
         
     def start_streams(self):
         """Initialize both input and output streams with error handling."""
@@ -61,6 +82,7 @@ class AudioManager:
                 channels=self.channels,
                 rate=self.input_rate,
                 input=True,
+                # input_device_index=102,
                 frames_per_buffer=self.mic_chunk_size,
                 stream_callback=self.audio_input_callback  # Set the callback function
             )
@@ -78,7 +100,7 @@ class AudioManager:
                 rate=self.output_rate,
                 output=True,
                 frames_per_buffer=self.chunk_size,
-                # output_device_index=0,  # Set to the desired output device index
+                # output_device_index=103,  # Set to the desired output device index
                 stream_callback=self.audio_output_callback  # Set the callback function
             )
             print("[AudioManager] Output stream initialized successfully.")

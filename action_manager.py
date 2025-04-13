@@ -25,15 +25,31 @@ class ActionManager:
         self.vision_description = ""
         self.isTalkingMovement = False
         self.isTakingAction = False
+        self.isPlayingSound = False
         self.state = RobotDogState()
         # self.my_dog.ultrasonic.set_mode(Ultrasonic.MODE_CONTINUOUS)
+
+    async def speak_async(self, filename):
+        """
+        Asynchronously plays a sound file.
+        """
+        if filename:
+            self.isPlayingSound = True
+            # Offload the blocking speak_block call to a thread
+            await asyncio.to_thread(self.my_dog.speak_block, filename)
+            print(f"[ActionManager] Finished playing sound: {filename}")
+            self.isPlayingSound = False
 
     async def initialize_posture(self):
         """Sets an initial posture after power up."""
         print("[ActionManager] Initializing posture...")
-        self.my_dog.speak("powerup")
-        await self.perform_action('sit,look_forward')
-        self.lightbar_breath()
+        # Run speak_async and perform_action concurrently
+        await asyncio.gather(
+            self.speak_async("powerup"),
+            self.perform_action('sit,look_forward'),
+            self.power_up_sequence()
+        )
+        print("[ActionManager] Posture initialized.")
         
     def detect_sound_direction(self):
         """Reads the dog's ear sensors to find out from which direction the sound came."""
@@ -482,6 +498,53 @@ class ActionManager:
     def lightbar_breath(self):
         self.my_dog.rgb_strip.set_mode(style="breath", color='pink', bps=0.5)
 
+    #async function for power_up_sequence that calls lightbar_power_up with progressively increasing brightness and Red->Orange->Yellow->White smooth color progression
+    async def power_up_sequence(self):
+        total_steps = 40  # 4 seconds with 0.1 sleep
+        red = (255, 0, 0)
+        orange = (255, 165, 0)
+        yellow = (255, 255, 0)
+        white = (255, 255, 255)
+
+        # Define transition points (adjust steps per transition if needed)
+        red_to_orange_steps = 13
+        orange_to_yellow_steps = 13
+        yellow_to_white_steps = total_steps - red_to_orange_steps - orange_to_yellow_steps # 14 steps
+
+        for i in range(1, total_steps + 1):
+            brightness = i / total_steps
+            r, g, b = 0, 0, 0
+
+            if i <= red_to_orange_steps:
+                # Transition Red to Orange
+                progress = i / red_to_orange_steps
+                r = int(red[0] + (orange[0] - red[0]) * progress)
+                g = int(red[1] + (orange[1] - red[1]) * progress)
+                b = int(red[2] + (orange[2] - red[2]) * progress)
+            elif i <= red_to_orange_steps + orange_to_yellow_steps:
+                # Transition Orange to Yellow
+                progress = (i - red_to_orange_steps) / orange_to_yellow_steps
+                r = int(orange[0] + (yellow[0] - orange[0]) * progress)
+                g = int(orange[1] + (yellow[1] - orange[1]) * progress)
+                b = int(orange[2] + (yellow[2] - orange[2]) * progress)
+            else:
+                # Transition Yellow to White
+                progress = (i - red_to_orange_steps - orange_to_yellow_steps) / yellow_to_white_steps
+                r = int(yellow[0] + (white[0] - yellow[0]) * progress)
+                g = int(yellow[1] + (white[1] - yellow[1]) * progress)
+                b = int(yellow[2] + (white[2] - yellow[2]) * progress)
+
+            # Ensure colors are within valid range
+            r = max(0, min(255, r))
+            g = max(0, min(255, g))
+            b = max(0, min(255, b))
+
+            self.set_lightbar_direct(r, g, b, brightness=brightness)
+            await asyncio.sleep(0.1) # 40 steps * 0.1s = 4 seconds
+
+        # Optional: Set a final state after the sequence
+        self.my_dog.rgb_strip.set_mode(style="breath", color='pink', bps=0.5) # Changed bps from 15 to 0.5 for a calmer breath
+
     def lightbar_boom(self, color='blue'):
         self.my_dog.rgb_strip.set_mode(style="boom", color=color, bps=3)
 
@@ -648,6 +711,7 @@ class ActionManager:
         """Handles the visual and audio effects during a persona switch."""
         print(f"[ActionManager] Handling persona switch effects for: {persona_name}")
         self.isTakingAction = True
+        self.isPlayingSound = True
         self.lightbar_boom('green')
         music = speak(self.my_dog, "audio/angelic_short.mp3")
         try:
@@ -658,6 +722,7 @@ class ActionManager:
             self.lightbar_breath()
         print(f"[ActionManager] Persona switch effects completed for: {persona_name}")
         self.isTakingAction = False
+        self.isPlayingSound = False
 
 
     async def detect_status(self, audio_manager, client):
@@ -689,27 +754,30 @@ class ActionManager:
 
                 new_goal = ""
 
+                if self.isTalkingMovement or self.isTakingAction:
+                    last_reminder_time = current_time # Reset reminder timer when talking or taking action
+
                 if is_change and (not self.isTalkingMovement):
                     new_goal = ""
                     last_change_time = current_time  # Update the last change time
                     if petting_changed:
                         if (current_time - self.state.petting_detected_at) < 10:
-                            new_goal = "You are being petted!"
-                        else:
-                            new_goal = "You are no longer being petted."
-                    if sound_changed:
-                        if (audio_manager.latest_volume > 30):
-                            new_goal = f"Sound (is someone talking?) came from direction: {self.state.last_sound_direction}"
+                            new_goal = "You are being petted!  You must say and do something in reaction to this."
+                        # else:
+                        #     new_goal = "You are no longer being petted."
+                    # if sound_changed:
+                    #     if (audio_manager.latest_volume > 30):
+                    #         new_goal = f"Sound (is someone talking?) came from direction: {self.state.last_sound_direction}. You don't need to react to this if someone is talking..."
                     if face_changed:
                         if (current_time - self.state.face_detected_at) < 10:
-                            new_goal = "A face is detected!"
-                        else:
-                            new_goal = "A face is no longer detected."
+                            new_goal = f"A face is detected! You are looking {self.state.head_position}. You must say and do something in reaction to this."
+                        # else:
+                        #     new_goal = f"A face is no longer detected. You are looking {self.state.head_position}"
                     if orientation_changed:
                         new_goal = self.state.last_orientation_description
 
                     if(len(new_goal) > 0):
-                        self.state.goal = new_goal + " You must say and do something in reaction to this."
+                        self.state.goal = new_goal
                         print(f"Goal: {self.state.goal}")
                         await client.send_awareness()
                         last_reminder_time = current_time  # Reset reminder timer when we have a new goal

@@ -50,11 +50,9 @@ class RealtimeClient:
         )
         print("[RealtimeClient] Connected to Realtime API")
         asyncio.create_task(self.receive())  # Start receiving in the background
-        asyncio.create_task(self.send_awareness())
         
     async def send_awareness(self):
         print("[RealtimeClient] Sending awareness status...")
-        asyncio.sleep(0.1)
         await self.send("response.create", {
             "response": {
                 "instructions": "get_awareness_status",
@@ -453,14 +451,26 @@ The following personas are available for switching via the `switch_persona` func
             }
         }
         await self.send("session.update", session_config)
+        await self.send_awareness()
 
-    async def reconnect(self, persona, persona_object = None):
+    async def reconnect(self, persona, persona_object=None):
         """
         For persona switching or forcibly re-establishing the connection.
         """
         await self.close()
+        self.audio_manager.stop_streams()
         await asyncio.sleep(0.1)
         await self.connect()
-        if(persona_object is not None):
-            personas.append(persona_object)
+        self.audio_manager.start_streams()
+    
+        if persona_object is not None:
+            # Check if a persona with the same name already exists
+            existing_persona = next((p for p in personas if p["name"] == persona_object["name"]), None)
+            if existing_persona:
+                # Update the existing persona
+                existing_persona.update(persona_object)
+            else:
+                # Append the new persona
+                personas.append(persona_object)
+    
         await self.update_session(persona)

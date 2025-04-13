@@ -76,6 +76,9 @@ async def main():
 
     client.function_call_manager = function_call_manager
 
+    
+    await action_manager.initialize_posture()
+
     # 1. Connect to GPT
     await client.connect()
 
@@ -87,9 +90,6 @@ async def main():
     asyncio.create_task(client.process_outgoing_audio())
     
     audio_manager.start_streams()
-    
-    
-    asyncio.create_task(action_manager.initialize_posture())
 
     # 2. Update session with a default or chosen persona
     await client.update_session("Vektor Pulsecheck")
