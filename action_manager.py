@@ -29,6 +29,9 @@ class ActionManager:
         self.state = RobotDogState()
         # self.my_dog.ultrasonic.set_mode(Ultrasonic.MODE_CONTINUOUS)
 
+    def close(self):
+        self.my_dog.close_all_thread()
+
     async def speak_async(self, filename):
         """
         Asynchronously plays a sound file.
@@ -176,9 +179,9 @@ class ActionManager:
         # Determine orientation based on pitch and roll
         if body_roll <= -80:
             return "You are upside down!"
-        elif -26 <= body_pitch <= 15:
+        elif -40 <= body_pitch <= 15:
             if 65 <= body_roll <= 105:
-                return "You are sitting, lying, or standing: upright."
+                return "You are upright."
             elif 155 <= abs(body_roll) <= 190:
                 return "You are on your left side!" if body_roll > 0 else "You are on your right side!"
         elif body_pitch >= 75:
@@ -307,6 +310,43 @@ class ActionManager:
         status_parts.append(f"Uptime: {uptime_string}")
 
         return ". ".join(status_parts) + "."
+
+    def get_simple_status(self):
+        """
+        Gathers basic info about the robot's state, including posture, head position,
+        last sound direction, and time since last face or pet detection.
+        Returns them as a formatted string.
+        """
+        status_parts = []
+
+        # Goal
+        status_parts.append(f"Current Goal: {self.state.goal}")
+
+        # Petting Status
+        if self.my_dog.dual_touch.read() != 'N':
+            status_parts.append("Someone is petting my head RIGHT NOW!")
+        elif self.state.petting_detected_at:
+            time_since_petting = time.time() - self.state.petting_detected_at
+            status_parts.append(f"Last petting was {time_since_petting:.1f} seconds ago.")
+        else:
+            status_parts.append("No petting detected yet.")
+
+        # Face Detection Status
+        if self.state.face_detected_at:
+            time_since_face = time.time() - self.state.face_detected_at
+            status_parts.append(f"Last face detected {time_since_face:.1f} seconds ago.")
+        else:
+            status_parts.append("No face detected yet.")
+
+        # Posture and Head Position
+        status_parts.append(f"Posture: {self.state.posture}")
+        status_parts.append(f"Head Position: {self.state.head_position}")
+
+        # Last Sound Direction
+        last_sound = self.state.last_sound_direction if self.state.last_sound_direction else "None detected yet"
+        status_parts.append(f"Last Sound Direction: {last_sound}")
+
+        return "\n".join(status_parts)
 
     async def take_photo(self, persona_prompt="", question=""):
         """
@@ -739,7 +779,7 @@ class ActionManager:
         is_change = False
         last_change_time = 0  # Track the last time a change was noticed
         last_reminder_time = time.time()  # Track the last time we reminded of the default goal
-        reminder_interval = random.randint(20, 40)  # Randomized interval between 20-40 seconds
+        reminder_interval = 7  # 5 seconds is long enough to do nothing
         
         while True:
             try:
@@ -770,16 +810,16 @@ class ActionManager:
                     if petting_changed:
                         if (current_time - self.state.petting_detected_at) < 10:
                             new_goal = "You are being petted!  You must say and do something in reaction to this."
-                        else:
-                            new_status_update = "You are no longer being petted."
+                        # else:
+                        #     new_status_update = "You are no longer being petted."
                     if sound_changed:
                         if (audio_manager.latest_volume > 30):
                             new_status_update = f"Sound (is someone talking?) came from direction: {self.state.last_sound_direction}. You don't need to react to this if someone is talking..."
                     if face_changed:
                         if (current_time - self.state.face_detected_at) < 10:
                             new_goal = f"A face is detected! You are looking {self.state.head_position}. You must say and do something in reaction to this."
-                        else:
-                            new_status_update = f"A face is no longer detected. You are looking {self.state.head_position}"
+                        # else:
+                        #     new_status_update = f"A face is no longer detected. You are looking {self.state.head_position}"
                     if orientation_changed:
                         new_goal = self.state.last_orientation_description
 
@@ -787,9 +827,10 @@ class ActionManager:
                         await client.send_text_message(new_status_update)
 
                     if(len(new_goal) > 0):
-                        self.state.goal = new_goal
-                        print(f"Goal: {self.state.goal}")
-                        await client.send_awareness()
+                        # self.state.goal = new_goal
+                        print(f"Sending message: {new_goal}")
+                        await client.send_text_message(new_goal)
+                        # TODO: force response creation?
                         last_reminder_time = current_time  # Reset reminder timer when we have a new goal
                 else:
                     # Check if we need to remind of default goal
@@ -799,9 +840,19 @@ class ActionManager:
                         elapsed_since_reminder > reminder_interval and 
                         client.persona is not None):
                         
-                        await self.remind_of_default_goal(client)
+                        default_motivation = client.persona.get("default_motivation", "You should engage with your surroundings.")
+                        simple_status = self.get_simple_status()
+                        await client.send_text_message(f"Checking in because you've been quiet'. Remember your current goal is: {default_motivation}. And your basic status is: {simple_status}\n This is your inner monologue, telling you to continue taking action!")
+                    
+                        #await self.remind_of_default_goal(client)
                         last_reminder_time = current_time
-                        reminder_interval = random.randint(45, 60)  # Randomize next interval
+                        reminder_interval = random.randint(5, 10)  # Randomize next interval
+
+                #every 10 seconds or so, print the current state
+                # if (current_time - last_change_time) > 10:
+                #     print(f"[ActionManager] Status: {self.get_status()}")
+                #     # await client.send_text_message("Robot Dog (You) Status: " + new_status_update)
+                #     last_change_time = current_time  # Update the last change time
 
                 await asyncio.sleep(0.3)
                 is_change = False

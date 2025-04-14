@@ -21,6 +21,7 @@ headers = {
 action_manager = None
 audio_manager = None
 client = None
+is_running = True
 
 async def shutdown(signal=None):
     """Clean shutdown of services when program exits"""
@@ -38,6 +39,12 @@ async def shutdown(signal=None):
     if audio_manager:
         print("Cleaning up audio resources...")
         audio_manager.close()
+
+    if action_manager:
+        print("Cleaning up action manager...")
+        action_manager.close()
+
+    is_running = False
 
     print("Shutdown complete.")
 
@@ -81,13 +88,6 @@ async def main():
 
     # 1. Connect to GPT
     await client.connect()
-
-    # 3. Start microphone capture & speaker playback tasks
-    #asyncio.create_task(audio_manager.visualize_audio())
-
-    # 4. Start processing function calls and audio from GPT
-    asyncio.create_task(client.process_function_calls())
-    asyncio.create_task(client.process_outgoing_audio())
     
     audio_manager.start_streams()
 
@@ -99,7 +99,7 @@ async def main():
 
     # Keep running
     try:
-        while True:
+        while is_running:
             await asyncio.sleep(1)
     except KeyboardInterrupt:
         print("Keyboard interrupt received...")

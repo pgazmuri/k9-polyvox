@@ -33,59 +33,44 @@ class FunctionCallManager:
                 return result
 
             elif func_name == 'get_system_status':
-                result = self.action_manager.get_status()
-                print(f"[FunctionCallManager] Result of 'get_system_status': {result}")
+                result = await self.get_system_status()
                 return result
 
             elif func_name == 'shut_down':
-                print("[FunctionCallManager] Shutting down...")
-                sys.exit()
-                sys.exit()
-                sys.exit()
+                await self.shut_down()
 
             elif func_name == 'get_awareness_status':
-                print("[FunctionCallManager] Getting awareness status...")
-                result = self.action_manager.state.goal
-                print(f"[FunctionCallManager] Result of 'get_awareness_status': {result}")
+                result = await self.get_awareness_status()
                 return result
 
             elif func_name == 'set_volume':
                 arguments = json.loads(function_call['arguments'])
-                self.action_manager.state.volume = arguments.get("volume_level", 1)
-                print(f"[FunctionCallManager] Volume set to: {self.action_manager.state.volume}")
-                result = "success"
+                volume_level = arguments.get("volume_level", 1)
+                result = await self.set_volume(volume_level)
                 return result
             
             elif func_name == 'set_goal':
                 arguments = json.loads(function_call['arguments'])
-                self.action_manager.state.goal = arguments.get("goal", "You are unsure of your goal. Ask what you should do next, or not.")
-                print(f"[FunctionCallManager] Goal set to: {self.action_manager.state.goal}")
-                result = "success"
+                goal = arguments.get("goal", "You are unsure of your goal. Ask what you should do next, or not.")
+                result = await self.set_goal(goal)
                 return result
             
             elif func_name == 'create_new_persona':
                 arguments = json.loads(function_call['arguments'])
                 persona_description = arguments.get("persona_description", None)
-                print(f"[FunctionCallManager] Requesting ActionManager to create new persona: {persona_description}")
-                result = await self.action_manager.create_new_persona_action(persona_description, self.client)
+                result = await self.create_new_persona(persona_description)
                 return result
 
             elif func_name == 'perform_action':
                 arguments = json.loads(function_call['arguments'])
                 action_name = arguments.get("action_name", "")
-                await self.action_manager.perform_action(action_name)
-                result = "success"
-                print(f"[FunctionCallManager] Result of 'perform_action': {result}")
+                result = await self.perform_action(action_name)
                 return result
 
             elif func_name == 'switch_persona':
                 arguments = json.loads(function_call['arguments'])
                 persona_name = arguments.get("persona_name", "Vektor Pulsecheck")
-                print(f"[FunctionCallManager] Switching persona to: {persona_name}")
-                # Call the new method in ActionManager to handle effects and reconnect
-                await self.action_manager.handle_persona_switch_effects(self.reconnect, persona_name)
-                result = "persona_switched"
-                print(f"[FunctionCallManager] Result of 'switch_persona': {result}")
+                result = await self.switch_persona(persona_name)
                 return result
 
             else:
@@ -100,3 +85,196 @@ class FunctionCallManager:
             print(error_message)
             print(stack_trace)
             return f"{error_message}\n{stack_trace}"
+
+    async def shut_down(self):
+        """
+        Shuts down the robot dog for maintenance.
+        """
+        print("[FunctionCallManager] Shutting down...")
+        sys.exit()
+        sys.exit()
+        sys.exit()
+
+    async def get_system_status(self):
+        """
+        Retrieves sensor and system status, including body pitch, battery voltage, CPU utilization, last sound direction, and more.
+        """
+        result = self.action_manager.get_status()
+        print(f"[FunctionCallManager] Result of 'get_system_status': {result}")
+        return result
+
+    async def get_awareness_status(self):
+        """
+        Retrieves text telling you what the robot dog just noticed.
+        """
+        print("[FunctionCallManager] Getting awareness status...")
+        result = self.action_manager.state.goal
+        print(f"[FunctionCallManager] Result of 'get_awareness_status': {result}")
+        return result
+
+    async def set_volume(self, volume_level):
+        """
+        Sets the speech volume.
+        """
+        self.action_manager.state.volume = volume_level
+        print(f"[FunctionCallManager] Volume set to: {self.action_manager.state.volume}")
+        return "success"
+
+    async def set_goal(self, goal):
+        """
+        Sets a new goal or motivation for the robot dog.
+        """
+        self.action_manager.state.goal = goal
+        print(f"[FunctionCallManager] Goal set to: {self.action_manager.state.goal}")
+        return "success"
+
+    async def create_new_persona(self, persona_description):
+        """
+        Generates and switches to a new persona based on the description provided.
+        """
+        print(f"[FunctionCallManager] Requesting ActionManager to create new persona: {persona_description}")
+        result = await self.action_manager.create_new_persona_action(persona_description, self.client)
+        return result
+
+    async def perform_action(self, action_name):
+        """
+        Performs one or more robotic actions simultaneously.
+        """
+        await self.action_manager.perform_action(action_name)
+        print(f"[FunctionCallManager] Result of 'perform_action': success")
+        return "success"
+
+    async def switch_persona(self, persona_name):
+        """
+        Switches the robot's personality to a specified persona.
+        """
+        print(f"[FunctionCallManager] Switching persona to: {persona_name}")
+        await self.action_manager.handle_persona_switch_effects(self.reconnect, persona_name)
+        print(f"[FunctionCallManager] Result of 'switch_persona': persona_switched")
+        return "persona_switched"
+
+#  Define base tools available to all personas
+def get_base_tools(personas, available_actions):
+    return [
+    {
+        "type": "function",
+        "name": "perform_action",
+        "description": "Performs one or more robotic actions simultaneously (comma-separated). Essential for expressing the persona physically.",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "action_name": {
+                    "type": "string",
+                    "description": f"The name of the action(s) to perform. Available actions: {', '.join(available_actions)}"
+                }
+            },
+            "required": ["action_name"]
+        }
+    },
+    {
+        "type": "function",
+        "name": "get_system_status",
+        "description": "Retrieves sensor and system status, including body pitch, battery voltage, cpu utilization, last sound direction and more.",
+        "parameters": {
+            "type": "object",
+            "properties": {},
+            "required": []
+        }
+    },
+    {
+        "type": "function",
+        "name": "get_awareness_status",
+        "description": "Retrieves text telling you what the robot dog just noticed.",
+        "parameters": {
+            "type": "object",
+            "properties": {},
+            "required": []
+        }
+    },
+    {
+        "type": "function",
+        "name": "look_and_see",
+        "description": "This is how you 'Look', 'See', or 'Take a picture'. Takes a picture in whatever direction the head position is in and retrieves text describing what you can see.",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "question": {
+                    "type": "string",
+                    "description": "A specific question about what the dog sees, if the user makes such a request."
+                }
+            },
+            "required": []
+        }
+    },
+    {
+        "type": "function",
+        "name": "switch_persona",
+        "description": "Switches the robot's personality to one of the available personas listed in the instructions.",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "persona_name": {
+                    "type": "string",
+                    "description": f"The exact name of the persona to switch to. Options: {', '.join([p['name'] for p in personas])}"
+                }
+            },
+            "required": ["persona_name"]
+        }
+    },
+    {
+        "type": "function",
+        "name": "set_volume",
+        "description": "Sets the speech volume.",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "volume_level": {
+                    "type": "number",
+                    "description": "The volume number. From 0.0 (sound off) to 3.0 (highest volume)."
+                }
+            },
+            "required": ["volume_level"]
+        }
+    },
+    {
+        "type": "function",
+        "name": "create_new_persona",
+        "description": "Generates and switches to a new persona based on the description provided.",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "persona_description": {
+                    "type": "string",
+                    "description": "A description of the persona, including name and personality traits."
+                }
+            },
+            "required": ["persona_description"]
+        }
+    },
+    {
+        "type": "function",
+        "name": "set_goal",
+        "description": "Sets a new goal or motivation that you will be reminded to pursue.",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "goal": {
+                    "type": "string",
+                    "description": "The new goal you will be reminded to pursue on occasion."
+                }
+            },
+            "required": ["goal"]
+        }
+    }
+]
+
+admin_tools = [{
+                "type": "function",
+                "name": "shut_down",
+                "description": "Shuts down the robot dog for maintenance.",
+                "parameters": {
+                    "type": "object",
+                    "properties": {},
+                    "required": []
+                }
+            }]
