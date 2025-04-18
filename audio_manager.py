@@ -100,7 +100,7 @@ class AudioManager:
                 rate=self.output_rate,
                 output=True,
                 frames_per_buffer=self.chunk_size,
-                # output_device_index=103,  # Set to the desired output device index
+                # output_device_index=0,  # Set to the desired output device index
                 stream_callback=self.audio_output_callback  # Set the callback function
             )
             print("[AudioManager] Output stream initialized successfully.")

@@ -43,9 +43,10 @@ async def generate_persona(persona_description: str) -> dict:
                 "The JSON object should include the following fields:\n"
                 "- name: (string)\n"
                 "- voice: (string, choose the most appropriate voice from the list above)\n"
-                "- prompt: (string, personality description, include funny quirks, how the persona talks, and what the persona voice might sound like - accents or affect)\n"
+                "- prompt: (string, personality description, include funny quirks, how the persona talks , and what the persona voice might sound like - accents or affect (e.g. if it's a pirate it should be a scottish pirate accent))\n"
                 "- image_prompt: (string, how would the character ask for a scene to be described)\n"
                 "- default_motivation: (string, default behavior or goal)\n\n"
+                "- description: (string, a short description of the character)\n\n"
                 "Here is an example:\n"
                 "{\n"
                 "    \"name\": \"Admiral Rufus Ironpaw\",\n"
@@ -63,13 +64,13 @@ async def generate_persona(persona_description: str) -> dict:
                 "    \"default_motivation\": \"Survey the surroundings and make sarcastic remarks about Earth's primitiveness.\",\n"
                 "    \"description\": \"A ruthless ex-fleet commander from the Galactic Canine Armada stranded in a robot dog body\"\n"
                 "}\n\n"
-                "Respond with only a valid JSON object and no other commentary."
+                "Respond with only a valid JSON object matching this schema exactly and no other commentary."
             )
         }
     ]
 
     response = await client.chat.completions.create(
-        model="gpt-4",
+        model="gpt-4.1",
         messages=messages
     )
 

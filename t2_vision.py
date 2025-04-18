@@ -17,7 +17,7 @@ Vilib.face_detect_switch(True)
 sleep(1)
 print('Camera Started') # Let the camera warm up
 
-VISION_MODEL = "gpt-4o-mini"
+VISION_MODEL = "gpt-4.1"
 CAPTURED_IMAGE = "pidog_vision.jpg"
 
 async def is_person_detected():

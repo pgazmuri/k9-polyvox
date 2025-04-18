@@ -3,13 +3,12 @@ from time import sleep
 import time
 import random
 from math import sin, cos, pi
-from robot_hat import Robot, Pin, Ultrasonic, utils, Music, I2C
+from robot_hat import Robot, Pin, Ultrasonic, utils, I2C
 import asyncio
 
 User = os.popen('echo ${SUDO_USER:-$LOGNAME}').readline().strip()
 UserHome = os.popen('getent passwd %s | cut -d: -f 6' %User).readline().strip()
 SOUND_DIR = f"{UserHome}/pidog/sounds/"
-music = Music()
 
 def scratch(my_dog):
     h1 = [[0, 0, -40]]
@@ -419,14 +418,14 @@ def speak(my_dog, name, volume=100):
         status, _ = utils.run_command('sudo killall pulseaudio') # Solve the problem that there is no sound when running in the vnc environment
 
         if os.path.isfile(name):
-            music.music_play(name, volume)
+            my_dog.music.music_play(name, volume)
         elif os.path.isfile(SOUND_DIR+name+'.mp3'):
-            music.music_play(SOUND_DIR+name+'.mp3', volume)
+            my_dog.music.music_play(SOUND_DIR+name+'.mp3', volume)
         elif os.path.isfile(SOUND_DIR+name+'.wav'):
-            music.music_play(SOUND_DIR+name+'.wav', volume)
+            my_dog.music.music_play(SOUND_DIR+name+'.wav', volume)
         else:
             return False
-        return music
+        return my_dog.music
 
 async def talk(my_dog, pitch_comp=-15, amplitude=4, duration=1.5, speed=85, fps=10):
     # Get the current head position

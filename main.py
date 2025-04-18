@@ -1,6 +1,13 @@
+import os
+
+# Set before importing anything pygame-related
+# os.environ["SDL_AUDIODRIVER"] = "alsa"
+# os.environ["AUDIODEV"] = "hw:0,0"
+
 import asyncio
 import time
 import signal
+import os
 from action_manager import ActionManager
 from audio_manager import AudioManager
 from function_call_manager import FunctionCallManager

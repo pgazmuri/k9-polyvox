@@ -140,7 +140,7 @@ class ActionManager:
             self.state.face_detected_at = time.time()
             # print(f"[DEBUG] Updated face_detected_at: {self.state.face_detected_at}")
         else:
-            if self.state.face_detected_at and time.time() - self.state.face_detected_at > 10:
+            if self.state.face_detected_at and time.time() - self.state.face_detected_at < 10:
                 # print("[DEBUG] No face detected for over 10 seconds.")
                 retVal = True
     
@@ -783,7 +783,7 @@ class ActionManager:
         
         while True:
             try:
-                print("Volume: ", audio_manager.latest_volume)
+                # print("Volume: ", audio_manager.latest_volume)
                 # Detect individual changes
                 petting_changed = self.detect_petting_change()
                 sound_changed = self.detect_sound_direction_change()
@@ -827,9 +827,9 @@ class ActionManager:
                         await client.send_text_message(new_status_update)
 
                     if(len(new_goal) > 0):
-                        # self.state.goal = new_goal
-                        print(f"Sending message: {new_goal}")
-                        await client.send_text_message(new_goal)
+                        self.state.goal = new_goal
+                        print(f"Sending awareness of new (temporary) goal: {new_goal}")
+                        await client.send_awareness()
                         # TODO: force response creation?
                         last_reminder_time = current_time  # Reset reminder timer when we have a new goal
                 else:
@@ -842,9 +842,9 @@ class ActionManager:
                         
                         default_motivation = client.persona.get("default_motivation", "You should engage with your surroundings.")
                         simple_status = self.get_simple_status()
-                        await client.send_text_message(f"Checking in because you've been quiet'. Remember your current goal is: {default_motivation}. And your basic status is: {simple_status}\n This is your inner monologue, telling you to continue taking action!")
+                        #await client.send_text_message(f"Checking in because you've been quiet'. Remember your default goal is: {default_motivation}. And your basic status is: {simple_status}\n This is your inner monologue, telling you to continue taking action!")
                     
-                        #await self.remind_of_default_goal(client)
+                        await self.remind_of_default_goal(client)
                         last_reminder_time = current_time
                         reminder_interval = random.randint(5, 10)  # Randomize next interval
 
