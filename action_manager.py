@@ -13,13 +13,19 @@ from t2_vision import TakePictureAndReportBack, is_person_detected
 from persona_generator import generate_persona
 from preset_actions import speak
 
+from display_manager import display_message, display_status
+
 class ActionManager:
     """
     Manages all PiDog-specific actions and sensor interactions.
     """
 
     def __init__(self):
+        display_message("Status", "Booting PiDog...")
         self.my_dog = Pidog()
+        print("PiDog Initiated...")
+        
+        display_message("Status", "PiDog Loaded...")
         time.sleep(1)  # small delay for hardware init
         self.sound_direction_status = ""
         self.vision_description = ""
@@ -829,6 +835,7 @@ class ActionManager:
                     if(len(new_goal) > 0):
                         self.state.goal = new_goal
                         print(f"Sending awareness of new (temporary) goal: {new_goal}")
+                        display_message("New Goal", new_goal)
                         await client.send_awareness()
                         # TODO: force response creation?
                         last_reminder_time = current_time  # Reset reminder timer when we have a new goal
@@ -842,6 +849,8 @@ class ActionManager:
                         
                         default_motivation = client.persona.get("default_motivation", "You should engage with your surroundings.")
                         simple_status = self.get_simple_status()
+                        
+                        display_message("Status", simple_status)
                         #await client.send_text_message(f"Checking in because you've been quiet'. Remember your default goal is: {default_motivation}. And your basic status is: {simple_status}\n This is your inner monologue, telling you to continue taking action!")
                     
                         await self.remind_of_default_goal(client)
