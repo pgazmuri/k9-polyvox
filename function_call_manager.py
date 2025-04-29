@@ -28,7 +28,9 @@ class FunctionCallManager:
                 arguments = json.loads(function_call['arguments'])
                 question = arguments.get("question", "")
                 # You could pass a persona prompt if you want
-                result = await self.action_manager.take_photo("", question=question)
+                #log persona to console
+                print(f"[FunctionCallManager] Persona: {self.client.persona}")
+                result = await self.action_manager.take_photo(persona=self.client.persona, question=question)
                 print(f"[FunctionCallManager] Result of 'look_and_see': {result}")
                 return result
 

@@ -290,8 +290,16 @@ class RealtimeClient:
                 "output": str(output)
             }
         })
-        # This is usually expected after a function call output
-        await self.send("response.create", {})
+        # This is usually expected after a function call output, when getting the awareness status we only want to trigger audio and an action
+        # as sometimes the dog would call change_persona or whatever in reponse to some goal or status...
+        if function_call['name'] == "get_awareness_status":
+            await self.send("response.create", {
+                "response": {
+                    "tool_choice": "none",
+                    "modalities": ["audio", "text"],
+                }})
+        else:
+            await self.send("response.create", {})
 
     async def send_text_message(self, text):
         """

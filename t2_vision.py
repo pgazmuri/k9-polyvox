@@ -17,7 +17,7 @@ Vilib.face_detect_switch(True)
 sleep(1)
 print('Camera Started') # Let the camera warm up
 
-VISION_MODEL = "gpt-4.1"
+VISION_MODEL = "gpt-4.1-mini"
 CAPTURED_IMAGE = "pidog_vision.jpg"
 
 async def is_person_detected():
@@ -52,14 +52,11 @@ async def TakePictureAndReportBack(prompt: str) -> str:
     with open(image_path, "rb") as img_file:
         image_data = img_file.read()
 
-    headers = {
-        "Authorization": f"Bearer {OPENAI_API_KEY}",
-        "Content-Type": "application/json"
-    }
+    
+    #log prompt to console
+    print(f"Image Description Prompt: {prompt}")
 
-    files = {
-        "file": (os.path.basename(image_path), image_data, "image/jpeg")
-    }
+
     encoded_image = base64.b64encode(image_data).decode('utf-8')
 
     payload = {
@@ -101,6 +98,9 @@ async def TakePictureAndReportBack(prompt: str) -> str:
         raise RuntimeError(f"OpenAI API error: {response.status_code} - {response.text}")
 
     result = response.json()
-    return result["choices"][0]["message"]["content"]
+    result = result["choices"][0]["message"]["content"]
+    #log result to console
+    print(f"Vision Result: {result}")
+    return result
 
 

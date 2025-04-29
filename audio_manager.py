@@ -23,7 +23,7 @@ class AudioManager:
                  action_manager=None):
         self.input_rate = 48000
         self.output_rate = 24000
-        self.chunk_size = 1024
+        self.chunk_size = 4096
         self.mic_chunk_size = 8192
         self.format = pyaudio.paInt16
         self.channels = 1
@@ -41,8 +41,16 @@ class AudioManager:
         self.loop = asyncio.get_event_loop()  # Get the loop reference for thread-safe operations
         self.dropped_frames = 0
         self.latest_volume = 0
-        self.volume_history = []  # Store recent volumes for running average
-        self.volume_history_duration = 0.1  # Duration in seconds for running average
+        # self.volume_history = []  # Store recent volumes for running average
+        # self.volume_history_duration = 0.1  # Duration in seconds for running average
+
+    def person_speaking(self):
+        """
+        Check if the person is speaking by checking the latest volume.
+        This is a placeholder for more complex logic.
+        """
+        # Placeholder logic: if volume is above a certain threshold, consider it as speaking
+        return self.latest_volume > 30
 
     def queue_audio(self, audio_bytes: bytes):
         """Add incoming audio to the queue for playback."""
@@ -65,7 +73,7 @@ class AudioManager:
         # Reset the dropped frames counter
         self.dropped_frames = 0
         # Reset the volume history
-        self.volume_history = []
+        # self.volume_history = []
         self.latest_volume = 0
         self.action_manager.isTalkingMovement = False
         # Reset the audio queueues
@@ -125,13 +133,13 @@ class AudioManager:
         self.latest_volume = np.sqrt(np.mean(audio_data**2))
 
         # Update running average of volumes
-        self.volume_history.append((self.latest_volume, len(audio_data) / self.input_rate))
-        total_duration = sum(duration for _, duration in self.volume_history)
-        while total_duration > self.volume_history_duration:
-            self.volume_history.pop(0)
-            total_duration = sum(duration for _, duration in self.volume_history)
-        if(total_duration > 0):
-            self.latest_volume = sum(volume * duration for volume, duration in self.volume_history) / total_duration
+        # self.volume_history.append((self.latest_volume, len(audio_data) / self.input_rate))
+        # total_duration = sum(duration for _, duration in self.volume_history)
+        # while total_duration > self.volume_history_duration:
+        #     self.volume_history.pop(0)
+        #     total_duration = sum(duration for _, duration in self.volume_history)
+        # if(total_duration > 0):
+        #     self.latest_volume = sum(volume * duration for volume, duration in self.volume_history) / total_duration
         # print(f"[AudioManager] Running average volume: {self.latest_volume}")
 
         try:

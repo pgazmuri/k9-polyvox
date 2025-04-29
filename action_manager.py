@@ -354,23 +354,29 @@ class ActionManager:
 
         return "\n".join(status_parts)
 
-    async def take_photo(self, persona_prompt="", question=""):
+    async def take_photo(self, persona, question="", silent=False):
         """
         Asks PiDog to flash a certain LED style, then triggers the camera routine
         and calls `TakePictureAndReportBack` with the prompt. Then reverts LED style.
         """
         self.isTakingAction = True
-        self.lightbar_boom()
         try:
             # optionally play a "camera shutter" or "beep" sound
             # speak(self.my_dog, "calc")  # If you want a beep or something
-            music = speak(self.my_dog, "calc")
+            if not silent: 
+                self.lightbar_boom()
+                music = speak(self.my_dog, "calc")
             self.vision_description = await TakePictureAndReportBack(
-                persona_prompt + f" {question}"
+                persona['image_prompt'] + f" {question}"
             )
-            music.music_stop()
+        #add error handling
+        except Exception as e:
+            print(f"[ActionManager] Error taking photo: {e}")
+            self.vision_description = "Error taking photo."
         finally:
-            self.lightbar_breath()
+            if not silent: 
+                self.lightbar_breath()
+                music.music_stop()
         
         print("[ActionManager] Vision result: ", self.vision_description)
         self.isTakingAction = False
@@ -806,8 +812,11 @@ class ActionManager:
 
                 new_goal = ""
 
-                if self.isTalkingMovement or self.isTakingAction:
+                if self.isTalkingMovement or self.isTakingAction or self.isPlayingSound:
                     last_reminder_time = current_time # Reset reminder timer when talking or taking action
+
+                if audio_manager.latest_volume > 30:
+                    last_reminder_time = current_time # Reset reminder timer when sound is detected
 
                 if is_change and (not self.isTalkingMovement):
                     new_goal = ""
@@ -847,9 +856,11 @@ class ActionManager:
                         elapsed_since_reminder > reminder_interval and 
                         client.persona is not None):
                         
-                        default_motivation = client.persona.get("default_motivation", "You should engage with your surroundings.")
+                        #start a thread to take a photo
+                        #call this in a new thread as a background task: TakePictureAndReportBack(question="Describe the current scene in front of you.")
+                        asyncio.create_task(self.perform_inline_photo(client))
+
                         simple_status = self.get_simple_status()
-                        
                         display_message("Status", simple_status)
                         #await client.send_text_message(f"Checking in because you've been quiet'. Remember your default goal is: {default_motivation}. And your basic status is: {simple_status}\n This is your inner monologue, telling you to continue taking action!")
                     
@@ -868,6 +879,14 @@ class ActionManager:
             except Exception as e:
                 print(f"[ActionManager::detect_status] Error: {e}")
                 await asyncio.sleep(1)  # Prevent tight loop on failure
+
+    async def perform_inline_photo(self, client):
+        #log persona to console
+        print(f"[ActionManager] Performing inline photo with persona: {client.persona}")
+        self.vision_description = await TakePictureAndReportBack(
+                            client.persona['image_prompt'] + f" Describe the current scene in front of you."
+                        )
+        client.send_text_message(f"In the direction your head is facing ({self.state.head_position}), you can see: {self.vision_description}")
 
     async def remind_of_default_goal(self, client):
         """
