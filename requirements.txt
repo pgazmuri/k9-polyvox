@@ -4,7 +4,6 @@ luma.oled==3.14.0
 numpy==2.2.5
 openai==1.76.2
 Pillow==9.4.0
-Pillow==11.2.1
 psutil==5.9.4
 pyaudio==0.2.14
 PyAudio==0.2.13
