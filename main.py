@@ -13,6 +13,7 @@ from audio_manager import AudioManager
 from function_call_manager import FunctionCallManager
 from realtime_client import RealtimeClient
 import threading
+import multiprocessing
 
 from keys import OPENAI_API_KEY  # Adjust to wherever your key is
 # Or define OPENAI_API_KEY = "..."
@@ -83,6 +84,10 @@ async def shutdown(signal_obj=None):
     print("Threads at shutdown:")
     for t in threading.enumerate():
         print(f" - {t.name} (daemon={t.daemon})")
+
+    print("Multiprocessing children at shutdown:")
+    for p in multiprocessing.active_children():
+        print(f" - {p.name} (pid={p.pid}, alive={p.is_alive()})")
 
 async def main():
     # Make variables global so they can be accessed in shutdown handler
