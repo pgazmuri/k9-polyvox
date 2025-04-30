@@ -44,6 +44,11 @@ def capture_image(path: str = "pidog_vision"):
 def close_camera():
     try:
         Vilib.camera_close()
+        if Vilib.flask_thread != None:
+            try:
+                Vilib.flask_thread.stop()
+            except Exception as e:
+                print(f"Error stopping Flask thread: {e}")
         print("Camera stopped.")
     except Exception as e:
         print(f"Error stopping camera: {e}")
