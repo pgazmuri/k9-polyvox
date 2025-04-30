@@ -29,19 +29,21 @@ action_manager = None
 audio_manager = None
 client = None
 is_running = True
-detect_status_task = None  # Add a global variable for the task handle
-is_shutting_down = False  # Add this global flag
+detect_status_task = None
+is_shutting_down = False
+shutdown_task_handle = None  # To store the shutdown task
 
-async def shutdown(signal=None):
+async def shutdown(signal_obj=None):
     """Clean shutdown of services when program exits"""
     global is_running, detect_status_task, is_shutting_down
     if is_shutting_down:
+        print("Shutdown already in progress...")
         return
     is_shutting_down = True
-    if signal:
-        print(f"Received exit signal...")
-    
-    print("Shutting down...")
+    if signal_obj:
+        print(f"Received exit signal {signal_obj.name}...")
+
+    print("Initiating shutdown sequence...")
     is_running = False  # Signal main loop and other loops to stop
 
     # 1. Cancel background tasks first
@@ -54,39 +56,38 @@ async def shutdown(signal=None):
             print("Background status detector cancelled.")
         except Exception as e:
             print(f"Error during background task cancellation: {e}")
-    
-    # 2. Close client connection
+
+    # 2. Close client connection (signals its tasks to stop)
     if client:
         print("Closing client connection...")
         await client.close()
-    
-    # 3. Clean up audio resources
+
+    # 3. Clean up audio resources (signals its tasks to stop)
     if audio_manager:
         print("Cleaning up audio resources...")
-        audio_manager.close()  # This is synchronous
+        # AudioManager.close() is synchronous but should signal async tasks
+        await asyncio.to_thread(audio_manager.close)
 
     # 4. Clean up action manager (including PiDog threads)
     if action_manager:
         print("Cleaning up action manager...")
-        action_manager.close()  # This is synchronous
+        # ActionManager.close() is synchronous
+        await asyncio.to_thread(action_manager.close)
 
-    print("Shutdown complete.")
+    print("Shutdown sequence complete.")
 
 async def main():
     # Make variables global so they can be accessed in shutdown handler
-    global action_manager, audio_manager, client, detect_status_task
-    
+    global action_manager, audio_manager, client, detect_status_task, is_running, shutdown_task_handle
+
     # Initialize PiDog actions
     action_manager = ActionManager()
 
     # Initialize audio I/O
-    audio_manager = AudioManager(action_manager=action_manager)
+    # Pass the current event loop to AudioManager
+    loop = asyncio.get_running_loop()
+    audio_manager = AudioManager(action_manager=action_manager, loop=loop)
 
-    # We define a function here so function_call_manager can reconnect
-    # using the RealtimeClient's logic.
-    client = None
-    
-    # Realtime client
     client = RealtimeClient(
         ws_url=WS_URL,
         model=MODEL,
@@ -98,46 +99,77 @@ async def main():
 
     # Initialize function call manager
     function_call_manager = FunctionCallManager(
-        action_manager=action_manager, 
+        action_manager=action_manager,
         client=client
     )
 
     client.function_call_manager = function_call_manager
 
-    # 1. Connect to GPT
-    await client.connect()
-    
-    audio_manager.start_streams()
+    # Define the signal handler function
+    def handle_signal(sig):
+        global shutdown_task_handle
+        print(f"\nSignal {sig.name} received.")
+        if not shutdown_task_handle or shutdown_task_handle.done():
+            print("Scheduling shutdown...")
+            # Schedule shutdown task without awaiting here
+            shutdown_task_handle = asyncio.create_task(shutdown(sig))
+        else:
+            print("Shutdown already scheduled.")
 
-    # 2. Update session with a default or chosen persona
-    await client.update_session("Vektor Pulsecheck")
+    # Register signal handlers
+    for sig in (signal.SIGINT, signal.SIGTERM):
+        loop.add_signal_handler(sig, handle_signal, sig)
 
-    await action_manager.initialize_posture()
-
-    # 5. Start background task and store the handle
-    detect_status_task = asyncio.create_task(action_manager.detect_status(audio_manager, client))
-
-    # Keep running
     try:
+        # 1. Connect to GPT
+        await client.connect()
+
+        # Start audio streams *after* connection and loop is running
+        audio_manager.start_streams()
+
+        # 2. Update session with a default or chosen persona
+        await client.update_session("Vektor Pulsecheck")
+
+        await action_manager.initialize_posture()
+
+        # 5. Start background task and store the handle
+        detect_status_task = asyncio.create_task(action_manager.detect_status(audio_manager, client))
+
+        # Keep running until is_running is False (set by shutdown)
+        print("Main loop running. Press Ctrl+C to exit.")
         while is_running:
-            await asyncio.sleep(1)
-    except KeyboardInterrupt:
-        print("Keyboard interrupt received...")
+            await asyncio.sleep(0.5)  # Check periodically
+
+    except asyncio.CancelledError:
+        print("Main task cancelled.")
     finally:
-        if not is_shutting_down:
-            await shutdown()
+        print("Main loop finished or interrupted.")
+        # Ensure shutdown completes if it was initiated by signal
+        if shutdown_task_handle and not shutdown_task_handle.done():
+            print("Waiting for shutdown task to complete...")
+            try:
+                await shutdown_task_handle
+            except asyncio.CancelledError:
+                print("Shutdown task was cancelled externally.")
+            except Exception as e:
+                print(f"Error during final shutdown wait: {e}")
+        # If loop exited for other reasons, ensure shutdown runs
+        elif not is_shutting_down:
+            print("Main loop exited unexpectedly, initiating shutdown...")
+            await shutdown()  # Call directly if not initiated by signal
+
+        # Clean up signal handlers
+        loop = asyncio.get_running_loop()
+        for sig in (signal.SIGINT, signal.SIGTERM):
+            loop.remove_signal_handler(sig)
+
 
 if __name__ == "__main__":
-    loop = asyncio.get_event_loop()
-    for sig in (signal.SIGINT, signal.SIGTERM):
-        # Stop the loop directly on signal
-        loop.add_signal_handler(sig, loop.stop)
     try:
-        loop.run_until_complete(main())
+        # asyncio.run handles loop creation, running main, and closing the loop
+        asyncio.run(main())
+    except KeyboardInterrupt:
+        # This might catch Ctrl+C if it happens very early or during final cleanup
+        print("\nKeyboardInterrupt caught at top level. Exiting.")
     finally:
-        # Ensure shutdown is called if loop was stopped by signal
-        # Check if shutdown has already run to avoid double execution
-        if not is_shutting_down:
-            # Run shutdown logic before the loop fully closes
-            loop.run_until_complete(shutdown())
-        loop.close()
+        print("Program exited.")
