@@ -406,33 +406,6 @@ def nod(my_dog, pitch_comp=-35, amplitude=20, step=2, speed=90):
     my_dog.head_move_raw(angs, speed=speed)
     my_dog.wait_all_done()
 
-def speak(my_dog, name, volume=100):
-        """
-        speak, play audio
-
-        :param name: the file name int the folder(SOUND_DIR)
-        :type name: str
-        :param volume: volume, 0-100
-        :type volume: int
-        """
-        print(f"looking for {SOUND_DIR+name+'.mp3'}")
-        status, _ = utils.run_command('sudo killall pulseaudio') # Solve the problem that there is no sound when running in the vnc environment
-
-        if os.path.isfile(name):
-            my_dog.music.music_play(name, volume)
-        elif os.path.isfile(LOCAL_SOUND_DIR+name):
-            my_dog.music.music_play(LOCAL_SOUND_DIR+name, volume)
-        elif os.path.isfile(LOCAL_SOUND_DIR+name+'.mp3'):
-            my_dog.music.music_play(LOCAL_SOUND_DIR+name+'.mp3', volume)
-        elif os.path.isfile(LOCAL_SOUND_DIR+name+'.wav'):
-            my_dog.music.music_play(LOCAL_SOUND_DIR+name+'.wav', volume)
-        elif os.path.isfile(SOUND_DIR+name+'.mp3'):
-            my_dog.music.music_play(SOUND_DIR+name+'.mp3', volume)
-        elif os.path.isfile(SOUND_DIR+name+'.wav'):
-            my_dog.music.music_play(SOUND_DIR+name+'.wav', volume)
-        else:
-            return False
-        return my_dog.music
 
 async def talk(my_dog, pitch_comp=-15, amplitude=4, duration=1.5, speed=85, fps=10):
     # Get the current head position

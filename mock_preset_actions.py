@@ -81,12 +81,6 @@ def nod(my_dog, pitch_comp=-35, amplitude=20, step=2, speed=90):
     print("[Mock Action] nod called")
     pass
 
-def speak(my_dog, name, volume=100):
-    print(f"[Mock Action] speak called with name: {name}, volume: {volume}")
-    # Simulate a short delay as if playing sound
-    time.sleep(0.1)
-    return None # Mocking the return value of the original speak
-
 async def talk(my_dog, pitch_comp=-15, amplitude=4, duration=1.5, speed=85, fps=10):
     print("[Mock Action] talk called")
     await asyncio.sleep(duration) # Simulate talking duration

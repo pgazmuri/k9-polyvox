@@ -18,7 +18,6 @@ else:
     print("[ActionManager] Using REAL preset actions.")
     from preset_actions import *
 
-from preset_actions import speak # Explicitly import speak as we still want to hear sounds
 from t2_vision import TakePictureAndReportBack, is_person_detected, close_camera
 from persona_generator import generate_persona
 
@@ -69,20 +68,52 @@ class ActionManager:
             print(f"[ActionManager] Finished playing sound: {filename}")
             self.isPlayingSound = False
 
+    
+    def speak(self, name, volume=100):
+        """
+        speak, play audio
+
+        :param name: the file name int the folder(SOUND_DIR)
+        :type name: str
+        :param volume: volume, 0-100
+        :type volume: int
+        """
+        print(f"looking for {SOUND_DIR+name+'.mp3'}")
+        status, _ = utils.run_command('sudo killall pulseaudio') # Solve the problem that there is no sound when running in the vnc environment
+
+        if os.path.isfile(name):
+            self.my_dog.music.music_play(name, volume)
+        elif os.path.isfile(LOCAL_SOUND_DIR+name):
+            self.my_dog.music.music_play(LOCAL_SOUND_DIR+name, volume)
+        elif os.path.isfile(LOCAL_SOUND_DIR+name+'.mp3'):
+            self.my_dog.music.music_play(LOCAL_SOUND_DIR+name+'.mp3', volume)
+        elif os.path.isfile(LOCAL_SOUND_DIR+name+'.wav'):
+            self.my_dog.music.music_play(LOCAL_SOUND_DIR+name+'.wav', volume)
+        elif os.path.isfile(SOUND_DIR+name+'.mp3'):
+            self.my_dog.music.music_play(SOUND_DIR+name+'.mp3', volume)
+        elif os.path.isfile(SOUND_DIR+name+'.wav'):
+            self.my_dog.music.music_play(SOUND_DIR+name+'.wav', volume)
+        else:
+            return False
+        return self.my_dog.music
+
     async def initialize_posture(self):
         """Sets an initial posture after power up."""
         print("[ActionManager] Initializing posture...")
         powerup_lightbar_task = asyncio.create_task(self.power_up_sequence())
-        music = speak(self.my_dog, "powerup")
+        self.isPlayingSound = True
+        music = self.speak("powerup")
         await self.perform_action('sit,look_forward')
         await powerup_lightbar_task  # Wait for the power-up sequence to finish
         music.music_stop()
+        self.isPlayingSound = False
         self.lightbar_breath()
     
     def reset_state_for_new_persona(self):
         self.sound_direction_status = ""
         self.vision_description = ""
         self.isTalkingMovement = False
+        self.isPlayingSound = False
         self.isTakingAction = False
         self.state = RobotDogState()
         self.last_change_time = 0  # Track the last time a change was noticed
@@ -390,10 +421,10 @@ class ActionManager:
         self.isTakingAction = True
         try:
             # optionally play a "camera shutter" or "beep" sound
-            # speak(self.my_dog, "calc")  # If you want a beep or something
             if not silent: 
                 self.lightbar_boom()
-                music = speak(self.my_dog, "calc")
+                self.isPlayingSound = True
+                music = self.speak("calc")
             self.vision_description = await TakePictureAndReportBack(
                 persona['image_prompt'] + f" {question}"
             )
@@ -405,9 +436,10 @@ class ActionManager:
             if not silent: 
                 self.lightbar_breath()
                 music.music_stop()
+                self.isPlayingSound = False
+                self.isTakingAction = False
         
         print("[ActionManager] Vision result: ", self.vision_description)
-        self.isTakingAction = False
         return self.vision_description
 
     async def perform_action(self, action_name):
@@ -776,7 +808,8 @@ class ActionManager:
         """Handles the actions associated with creating and switching to a new persona."""
         print(f"[ActionManager] Creating new persona: {persona_description}")
         self.isTakingAction = True
-        music = speak(self.my_dog, "audio/angelic_ascending.mp3")
+        self.isPlayingSound = True
+        music = self.speak("audio/angelic_ascending.mp3")
         self.lightbar_boom('white')
         new_persona = None # Initialize new_persona
         try:
@@ -787,11 +820,12 @@ class ActionManager:
         finally:
             if music:
                 music.music_stop()
+            self.isPlayingSound = False
+            self.isTakingAction = False
             self.lightbar_breath()
         # Check if new_persona was successfully created before accessing its name
         persona_name = new_persona.get('name', 'Unknown') if new_persona else 'Unknown'
         print(f"[ActionManager] Successfully created and switched to new persona: {persona_name}")
-        self.isTakingAction = False
         return "success"
 
     async def handle_persona_switch_effects(self, persona_name, client):
@@ -800,17 +834,21 @@ class ActionManager:
         self.isTakingAction = True
         self.isPlayingSound = True
         self.lightbar_boom('green')
-        music = speak(self.my_dog, "audio/angelic_short.mp3")
+        music = self.speak("audio/angelic_short.mp3")
         try:
             self.reset_state_for_new_persona()
             await client.reconnect(persona_name)
+        #exception handling for when the persona is not found
+        except Exception as e:
+            print(f"[ActionManager] Error during persona switch: {e}")
+            return f"Error during persona switch: {e}"
         finally:
             if music:
                 music.music_stop()
             self.lightbar_breath()
+            self.isTakingAction = False
+            self.isPlayingSound = False
         print(f"[ActionManager] Persona switch effects completed for: {persona_name}")
-        self.isTakingAction = False
-        self.isPlayingSound = False
 
 
     async def detect_status(self, audio_manager, client):
@@ -821,7 +859,7 @@ class ActionManager:
         is_change = False
         self.last_change_time = 0  # Track the last time a change was noticed
         self.last_reminder_time = time.time()  # Track the last time we reminded of the default goal
-        reminder_interval = random.randint(20, 40)  # Randomized interval between 20-40 seconds
+        reminder_interval = 15  # 15 seconds
         
         while True:
             try:
