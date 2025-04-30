@@ -166,6 +166,8 @@ async def main():
 
     except asyncio.CancelledError:
         print("Main task cancelled.")
+    except Exception as e:
+        print(f"Error in main loop: {e}")
     finally:
         print("Main loop finished or interrupted.")
         # Ensure shutdown completes if it was initiated by signal
