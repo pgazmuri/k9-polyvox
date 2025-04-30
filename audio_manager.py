@@ -35,8 +35,8 @@ class AudioManager:
         self._playback_task = None  # To manage the playback task
 
         # Find device indices (replace with your actual logic if needed)
-        self.input_device_index = self._find_device_index("pulse")  # Example
-        self.output_device_index = self._find_device_index("pulse")  # Example
+        # self.input_device_index = self._find_device_index("pulse")  # Example
+        # self.output_device_index = self._find_device_index("pulse")  # Example
 
         print(f"[AudioManager] Input Device Index: {self.input_device_index}")
         print(f"[AudioManager] Output Device Index: {self.output_device_index}")
@@ -102,7 +102,7 @@ class AudioManager:
                 channels=1,
                 rate=self.input_rate,
                 input=True,
-                input_device_index=self.input_device_index,
+                # input_device_index=self.input_device_index,
                 frames_per_buffer=self.chunk_size,
                 stream_callback=self.audio_input_callback
             )
@@ -118,7 +118,7 @@ class AudioManager:
                 channels=1,
                 rate=self.output_rate,
                 output=True,
-                output_device_index=self.output_device_index,
+                # output_device_index=self.output_device_index,
                 frames_per_buffer=self.chunk_size,
                 stream_callback=self.audio_output_callback
             )
