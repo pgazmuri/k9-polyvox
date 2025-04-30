@@ -155,10 +155,12 @@ class RealtimeClient:
                         self.audio_manager.queue_audio(audio_chunk)
                     
                     
-                    elif msg_type == 'response.created':
+                    elif msg_type == 'response.output_item.added':
                         #clear the audio buffer when a new response is created
-                        print(f"[RealtimeClient] New response created {response}, clearing audio buffer...")
-                        self.audio_manager.clear_audio_buffer()
+                        if(response['output_index'] == 0):
+                            print(f"[RealtimeClient] New response created {response}, clearing audio buffer...")
+                            self.audio_manager.clear_audio_buffer()
+                        
 
                     elif msg_type == 'response.audio_transcript.delta':
                         # Partial transcript while GPT is speaking
