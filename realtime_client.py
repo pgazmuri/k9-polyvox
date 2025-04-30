@@ -5,7 +5,6 @@ import time
 import wave
 import numpy as np
 import pyaudio
-from audio_manager import AudioManager
 import resampy
 import websockets
 import base64
@@ -25,7 +24,7 @@ class RealtimeClient:
                  model, 
                  headers,
                  function_call_manager,
-                 audio_manager : AudioManager,
+                 audio_manager,
                  action_manager):
         self.ws_url = ws_url
         self.model = model
