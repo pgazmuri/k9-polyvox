@@ -52,10 +52,10 @@ class FunctionCallManager:
                     os.system(f"(sleep 3; sudo kill -9 {os.getpid()}) &")
                     os.system(f"(sleep 5; {python_executable} {script_path}) &")
 
-                    
-                    sys.exit()
-                    sys.exit()
-                    sys.exit()
+                    #this seems to seng a signal to the process to quit, but it doesn't seem to work, leaves the camera in a bad state
+                    # sys.exit()
+                    # sys.exit()
+                    # sys.exit()
 
                     # Kill the current process
                     # os.kill(os.getpid(), 9)
