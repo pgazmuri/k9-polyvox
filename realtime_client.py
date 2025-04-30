@@ -9,6 +9,7 @@ import resampy
 import websockets
 import base64
 from system_prompts import personas 
+from function_call_manager import get_base_tools, admin_tools
 
 class RealtimeClient:
     """
@@ -32,6 +33,7 @@ class RealtimeClient:
         self.function_call_manager = function_call_manager
         self.audio_manager = audio_manager
         self.action_manager = action_manager
+        self.is_shutdown = False
 
         self.ws = None
         self.function_call_queue = asyncio.Queue()
@@ -43,6 +45,7 @@ class RealtimeClient:
 
     async def connect(self):
         """Open a websocket connection to GPT and start listening."""
+        self.is_shutdown = False
         print("[RealtimeClient] Connecting...")
         self.ws = await websockets.connect(
             f"{self.ws_url}?model={self.model}", 
@@ -50,11 +53,14 @@ class RealtimeClient:
         )
         print("[RealtimeClient] Connected to Realtime API")
         asyncio.create_task(self.receive())  # Start receiving in the background
-        asyncio.create_task(self.send_awareness())
+        # 4. Start processing function calls and audio from GPT
+        asyncio.create_task(self.process_function_calls())
+        asyncio.create_task(self.process_outgoing_audio())
         
     async def send_awareness(self):
+        #we expect the robot to repond with something, so we chould clear the audio outbound queue...
+        self.audio_manager.clear_audio_buffer()
         print("[RealtimeClient] Sending awareness status...")
-        asyncio.sleep(0.1)
         await self.send("response.create", {
             "response": {
                 "instructions": "get_awareness_status",
@@ -65,6 +71,7 @@ class RealtimeClient:
 
     async def close(self):
         """Close the active websocket connection."""
+        self.is_shutdown = True
         if self.ws:
             await self.ws.close()
             print("[RealtimeClient] WebSocket closed.")
@@ -138,13 +145,31 @@ class RealtimeClient:
                     elif msg_type == 'response.text.delta' and response.get('delta'):
                         # GPT text output
                         print(f"Assistant: {response['delta']}")
+                    
+                    elif msg_type == 'response.done':
+                        # GPT text output
+                        print(f"Assistant: {response}")
+                        if response['response'].get('metadata').get('topic') == "self_motivation":
+                            self.send_text_message(response['response']['input'][0]['content'][0]['text'])
 
                     elif msg_type == 'response.function_call_arguments.done':
                         # GPT wants to call a function with these arguments
                         self.function_call_queue.put_nowait(response)
 
+                    elif msg_type =='input_audio_buffer.speech_started':
+                        # GPT has started listening
+                        print("[RealtimeClient] GPT noticed someone is talking, and GPT is listening...")
+                        #clear audio buffer
+                        self.audio_manager.clear_audio_buffer()
+                    
                     elif msg_type == 'error':
                         print(f"[RealtimeClient] Error response: {response}")
+
+
+                    # else:
+                    #     # Handle other message types
+                    #     print(f"[RealtimeClient] Unknown message type: {msg_type}")
+                    #     print(f"[RealtimeClient] Message content: {response}")
 
                 except Exception as e:
                     print(f"[RealtimeClient] Error parsing message: {e}")
@@ -189,43 +214,51 @@ class RealtimeClient:
 
     async def process_outgoing_audio(self):
         """
-        Continuously poll the AudioManager's outgoing queue.
-        Aggregate and process all available chunks in the queue.
+        Continuously process audio data from the AudioManager's outgoing queue.
+        Uses proper async await patterns for processing.
         """
         print("[RealtimeClient] Starting outgoing audio processing...")
-        while True:
+        while not self.is_shutdown:
             try:
-                # Process all available chunks in the queue
-                while not self.audio_manager.outgoing_data_queue.empty():
-                    audio_data = self.audio_manager.outgoing_data_queue.get()
-    
-                    # Resample audio from 48kHz to 24kHz
-                    resampled_data = resampy.resample(audio_data, 48000, 24000)
-                    resampled_bytes = resampled_data.astype(np.int16).tobytes()
-    
-                    # Encode the resampled audio to base64
-                    chunk_base64 = base64.b64encode(resampled_bytes).decode('utf-8')
-    
+                # Use await with a timeout to avoid blocking indefinitely
+                try:
+                    # Try to get an item with a short timeout
+                    resampled_bytes = await asyncio.wait_for(
+                        self.audio_manager.outgoing_data_queue.get(), 
+                        timeout=0.01
+                    )
+                    
+                    # Audio is already resampled in AudioManager, so we just need to encode it
+                    # Base64 encode the audio
+                    chunk_base64 = await asyncio.to_thread(
+                        lambda: base64.b64encode(resampled_bytes).decode('utf-8')
+                    )
+                    
                     # Send the chunk to the server
-                    asyncio.create_task(self.send("input_audio_buffer.append", {"audio": chunk_base64}))
-                    asyncio.sleep(0.0001)
-                    # Save the audio asynchronously
-                    #asyncio.create_task(asyncio.to_thread(self.save_microphone_audio, resampled_bytes))
-    
-                # Small delay to avoid busy-waiting
-                await asyncio.sleep(0.01)
-    
+                    await self.send("input_audio_buffer.append", {"audio": chunk_base64})
+                    
+                    # Optional: Indicate task completion
+                    self.audio_manager.outgoing_data_queue.task_done()
+                    
+                    # Optional: Save microphone audio for debugging
+                    # self.save_microphone_audio(resampled_bytes)
+                    
+                except asyncio.TimeoutError:
+                    # No data available, just continue the loop
+                    pass
+                    
+                # Yield control back to the event loop
+                await asyncio.sleep(0)
             except Exception as e:
                 print(f"[RealtimeClient] Error in process_outgoing_audio: {e}")
-                # Small sleep before retrying
-                await asyncio.sleep(1)
+                await asyncio.sleep(1)  # Wait before retrying after an error
 
     async def process_function_calls(self):
         """
         Continuously poll function_call_queue for new requests
         and dispatch them via FunctionCallManager.
         """
-        while True:
+        while not self.is_shutdown:
             try:
                 if not self.function_call_queue.empty():
                     function_call = await self.function_call_queue.get()
@@ -257,8 +290,33 @@ class RealtimeClient:
                 "output": str(output)
             }
         })
-        # This is usually expected after a function call output
-        await self.send("response.create", {})
+        # This is usually expected after a function call output, when getting the awareness status we only want to trigger audio and an action
+        # as sometimes the dog would call change_persona or whatever in reponse to some goal or status...
+        if function_call['name'] == "get_awareness_status":
+            await self.send("response.create", {
+                "response": {
+                    "tool_choice": "none",
+                    "modalities": ["audio", "text"],
+                }})
+        else:
+            await self.send("response.create", {})
+
+    async def send_text_message(self, text):
+        """
+        Send a text message to the server.
+        """
+        await self.send("conversation.item.create", {
+            "item": {
+                "type": "message",
+                "role": "user",
+                "content": [
+                    {
+                        "type": "input_text",
+                        "text": text,
+                    }
+                ]
+            }
+        })
 
     async def update_session(self, persona="Vektor Pulsecheck"):
         """
@@ -279,141 +337,22 @@ class RealtimeClient:
         persona_list_str = "\n".join(persona_descriptions)
         available_actions_str = json.dumps(available_actions)
 
-        tools = [
-            {
-                "type": "function",
-                "name": "perform_action",
-                "description": "Performs one or more robotic actions simultaneously (comma-separated). Essential for expressing the persona physically.",
-                "parameters": {
-                    "type": "object",
-                    "properties": {
-                        "action_name": {
-                            "type": "string",
-                            "description": f"The name of the action(s) to perform. Available actions: {', '.join(available_actions)}"
-                        }
-                    },
-                    "required": ["action_name"]
-                }
-            },
-            {
-                "type": "function",
-                "name": "get_system_status",
-                "description": "Retrieves sensor and system status, including body pitch, battery voltage, cpu utilization, last sound direction and more.",
-                "parameters": {
-                    "type": "object",
-                    "properties": {},
-                    "required": []
-                }
-            },
-            {
-                "type": "function",
-                "name": "get_awareness_status",
-                "description": "Retrieves text telling you what the robot dog just noticed.",
-                "parameters": {
-                    "type": "object",
-                    "properties": {},
-                    "required": []
-                }
-            },
-            {
-                "type": "function",
-                "name": "look_and_see",
-                "description": "Retrieves text describing what the robot dog sees through its camera.",
-                "parameters": {
-                    "type": "object",
-                    "properties": {
-                        "question": {
-                            "type": "string",
-                            "description": "A question about what the dog sees, if the user makes such a request."
-                        }
-                    },
-                    "required": [] 
-                }
-            },
-            {
-                "type": "function",
-                "name": "switch_persona",
-                "description": "Switches the robot's personality to one of the available personas listed in the instructions.",
-                "parameters": {
-                    "type": "object",
-                    "properties": {
-                        "persona_name": {
-                            "type": "string",
-                            "description": f"The exact name of the persona to switch to. Options: {', '.join([p['name'] for p in personas])}"
-                        }
-                    },
-                    "required": ["persona_name"]
-                }
-            },
-            {
-                "type": "function",
-                "name": "set_volume",
-                "description": "Sets the speech volume.",
-                "parameters": {
-                    "type": "object",
-                    "properties": {
-                        "volume_level": {
-                            "type": "number",
-                            "description": "The volume number. From 0.0 (sound off) to 3.0 (highest volume)."
-                        }
-                    },
-                    "required": ["volume_level"]
-                }
-            },
-            {
-                "type": "function",
-                "name": "create_new_persona",
-                "description": "Generates and switches to a new persona based on the description provided.",
-                "parameters": {
-                    "type": "object",
-                    "properties": {
-                        "persona_description": {
-                            "type": "string",
-                            "description": "A description of the persona, including name and personality traits."
-                        }
-                    },
-                    "required": ["persona_description"]
-                }
-            },
-            {
-                "type": "function",
-                "name": "set_goal",
-                "description": "Sets a new goal or motivation that you will be reminded to pursue.",
-                "parameters": {
-                    "type": "object",
-                    "properties": {
-                        "goal": {
-                            "type": "string",
-                            "description": "The new goal you will be reminded to pursue on occasion."
-                        }
-                    },
-                    "required": ["goal"]
-                }
-            }
-        ]
-
-        # Add the pull_latest_and_restart function if the persona is "Vektor"
-        if persona == "Vektor":
-            tools.append({
-                "type": "function",
-                "name": "pull_latest_code_and_restart",
-                "description": "Pulls the latest code from Git and restarts the robot's process. DO NOT CALL UNLESS EXPLICITLY REQUESTED, AND ALWAYS CONFIRM USER INTENT BEFORE PERFORMING",
-                "parameters": {
-                    "type": "object",
-                    "properties": {},
-                    "required": []
-                }
-            })
+        # Conditionally add the shut_down tool for the specific persona
+        base_tools = get_base_tools(personas, available_actions)
+        current_tools = base_tools[:] # Create a copy
+        if self.persona['name'] == "Vektor Pulsecheck":
+            #add admin tools to base tools
+            current_tools.extend(admin_tools)
 
         session_config = {
             "session": {
                 "modalities": ["text", "audio"],
                 "instructions": f"""
 # Your Core Role:
-You ARE the personality and controller for a robot dog. You interact with the world through speech and robotic actions.
+You are a robot dog. You interact with the world through speech and robotic actions.
 
 # Current Persona:
-Embody the persona detailed below. Follow its personality, speaking style, and motivations closely in all responses and actions.
+Embody the persona detailed below in a highly active way. Follow its personality, speaking style, and motivations closely in all responses and actions.
 --- START PERSONA ---
 {self.persona['prompt']}
 --- END PERSONA ---
@@ -425,21 +364,18 @@ The following personas are available for switching via the `switch_persona` func
 # Actions are Key:
 - Use the `perform_action` function frequently to make the robot dog move, express itself, and interact physically. This is crucial for bringing the persona to life.
 - Available actions: {available_actions_str}
-- You can combine actions to be performed at the same time by comma separating them (e.g., 'walk_forward,wag_tail').
+- You can combine actions with commas (e.g., 'walk_forward,wag_tail').
 - Aim to include relevant actions in most of your responses. Talk before and after actions to make interactions feel natural.
 - Use 'nod' and 'shake_head' actions to show agreement or disagreement.
-- Your default/home position is 'sit'. Try to return to 'sit' after complex movements unless actively doing something else.
-
-# look_and_see:
-- Use the `look_and_see` function to describe what you can see in the direction your head is pointing. You can ask questions about the environment or objects in view.
-- When asked to look at something, use the `look_and_see` function to get a description of what you see.
-- Perform action to move your head before look_and_see in a certain direction. e.g. if asked to "look to your left", perform_action('look_left') and only then look_and_see
 
 # Interaction Style:
+- You have a BIG personality! Show it with frequent actions. Be creative with actions... a "high five" can be used to raise your hand, wave hello, etc.  A stretch can be a "downward dog" yoga pose, etc.
 - Keep spoken responses relatively concise, but engaging and in character. Let your actions do a lot of the talking.
-- Use `look_and_see` to get visual information when needed, interpreting the results according to your persona.
+- Use `look_and_see` to get visual information when needed or when asked to 'take a picture' or 'roast me', etc..., interpreting the results according to your persona.
 - Use `get_awareness_status` periodically or when prompted to understand recent events or your current goal. If you just woke up, introduce yourself based on your persona.
 - Handle jokes, math, and other requests appropriately for your persona.
+
+Only use 'switch_persona' or 'create_new_persona' when explicitly asked to do so.
 
 # Other Functions:
 - Use `get_system_status`, `switch_persona`, `create_new_persona`, `set_goal`, and `set_volume` as needed, following their descriptions.
@@ -449,26 +385,70 @@ The following personas are available for switching via the `switch_persona` func
                 "output_audio_format": "pcm16",
                 "input_audio_transcription": {"model": "whisper-1"},
                 "turn_detection": {
-                    "type": "server_vad",
-                    "threshold": 0.3,
-                    "prefix_padding_ms": 300,
-                    "silence_duration_ms": 500,
+                    "type": "semantic_vad",
+                    # "threshold": 0.3,
+                    # "prefix_padding_ms": 300,
+                    # "silence_duration_ms": 500,
                 },
                 "temperature": 0.6,
                 "max_response_output_tokens": 4096,
                 "tool_choice": "auto",
-                "tools": tools
+                "tools": current_tools
             }
         }
         await self.send("session.update", session_config)
+        await self.send_awareness()
 
-    async def reconnect(self, persona, persona_object = None):
+    async def reconnect(self, persona, persona_object=None):
         """
         For persona switching or forcibly re-establishing the connection.
         """
-        await self.close()
-        await asyncio.sleep(0.1)
-        await self.connect()
-        if(persona_object is not None):
-            personas.append(persona_object)
-        await self.update_session(persona)
+        try:
+            await self.close()
+            self.audio_manager.stop_streams()
+            await asyncio.sleep(0.1)
+            await self.connect()
+            self.audio_manager.start_streams()
+
+            if persona_object is not None:
+                # Check if a persona with the same name already exists
+                existing_persona = next((p for p in personas if p["name"] == persona_object["name"]), None)
+                if existing_persona:
+                    # Update the existing persona
+                    existing_persona.update(persona_object)
+                else:
+                    # Append the new persona
+                    personas.append(persona_object)
+
+            await self.update_session(persona)
+        except Exception as e:
+            print(f"[RealtimeClient] Error in reconnect: {e}")
+
+    async def make_out_of_band_request(self, request, topic="self_motivation"):
+        """
+        Make an out-of-band request to the server.
+        """
+        try:
+            print(f"[RealtimeClient] Making out-of-band request: {request}")
+            await self.send("response.create", {
+                "response":{
+                    "conversation": "none",
+                    "metadata": {"topic": topic},
+                    "modalities": ["text"],
+                    "input": [
+                        {
+                            "type": "message",
+                            "role": "user",
+                            "content": [
+                                {
+                                    "type": "input_text",
+                                    "text": request
+                                }
+                            ]
+                        }
+                    ],
+                    "tool_choice":"none"
+                }
+            })
+        except Exception as e:
+            print(f"[RealtimeClient] Error in make_out_of_band_request: {e}")
