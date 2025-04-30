@@ -52,6 +52,10 @@ class ActionManager:
         close_camera()
         self.perform_action('lie')
         self.my_dog.close()
+        try:
+            self.my_dog.sensory_process.stop()
+        except Exception as e:
+            print(f"[ActionManager] Error stopping sensory process: {e}")
 
     async def speak_async(self, filename):
         """
