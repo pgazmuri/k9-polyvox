@@ -5,6 +5,7 @@ import time
 import wave
 import numpy as np
 import pyaudio
+from audio_manager import AudioManager
 import resampy
 import websockets
 import base64
@@ -24,7 +25,7 @@ class RealtimeClient:
                  model, 
                  headers,
                  function_call_manager,
-                 audio_manager,
+                 audio_manager : AudioManager,
                  action_manager):
         self.ws_url = ws_url
         self.model = model
@@ -130,7 +131,7 @@ class RealtimeClient:
             while not self.message_queue.empty():
                 message = self.message_queue.get()
                 print(f"[RealtimeClient] Sending buffered message: {message}")
-                asyncio.create_task(self._send_message(json.loads(message)))
+                asyncio.create_task(self._send_message(message))
                 await asyncio.sleep(0.01)  # Small delay to avoid overwhelming the server
         except Exception as e:
             print(f"[RealtimeClient] Error flushing buffer: {e}")
@@ -256,7 +257,7 @@ class RealtimeClient:
                 try:
                     # Try to get an item with a short timeout
                     resampled_bytes = await asyncio.wait_for(
-                        self.audio_manager.outgoing_data_queue.get(), 
+                        self.audio_manager.dequeue_audio(), 
                         timeout=0.01
                     )
                     
