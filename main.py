@@ -26,10 +26,7 @@ async def main():
     # We define a function here so function_call_manager can reconnect
     # using the RealtimeClient's logic.
     client = None
-    async def reconnect_cb(persona_name, persona_object=None):
-        if client is not None:
-            await client.reconnect(persona_name, persona_object)
-
+    
     # Realtime client
     client = RealtimeClient(
         ws_url=WS_URL,
@@ -43,7 +40,6 @@ async def main():
     # Initialize function call manager
     function_call_manager = FunctionCallManager(
         action_manager=action_manager, 
-        reconnect_callback=reconnect_cb,
         client=client
     )
 

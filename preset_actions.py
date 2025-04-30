@@ -9,6 +9,7 @@ import asyncio
 User = os.popen('echo ${SUDO_USER:-$LOGNAME}').readline().strip()
 UserHome = os.popen('getent passwd %s | cut -d: -f 6' %User).readline().strip()
 SOUND_DIR = f"{UserHome}/pidog/sounds/"
+LOCAL_SOUND_DIR = f"audio/"
 music = Music()
 
 def scratch(my_dog):
@@ -420,6 +421,12 @@ def speak(my_dog, name, volume=100):
 
         if os.path.isfile(name):
             music.music_play(name, volume)
+        elif os.path.isfile(LOCAL_SOUND_DIR+name):
+            music.music_play(LOCAL_SOUND_DIR+name, volume)
+        elif os.path.isfile(LOCAL_SOUND_DIR+name+'.mp3'):
+            music.music_play(LOCAL_SOUND_DIR+name+'.mp3', volume)
+        elif os.path.isfile(LOCAL_SOUND_DIR+name+'.wav'):
+            music.music_play(LOCAL_SOUND_DIR+name+'.wav', volume)
         elif os.path.isfile(SOUND_DIR+name+'.mp3'):
             music.music_play(SOUND_DIR+name+'.mp3', volume)
         elif os.path.isfile(SOUND_DIR+name+'.wav'):

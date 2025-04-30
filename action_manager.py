@@ -21,12 +21,7 @@ class ActionManager:
     def __init__(self):
         self.my_dog = Pidog()
         time.sleep(1)  # small delay for hardware init
-        self.sound_direction_status = ""
-        self.vision_description = ""
-        self.isTalkingMovement = False
-        self.isTakingAction = False
-        self.state = RobotDogState()
-        # self.my_dog.ultrasonic.set_mode(Ultrasonic.MODE_CONTINUOUS)
+        self.reset_state_for_new_persona()
 
     async def initialize_posture(self):
         """Sets an initial posture after power up."""
@@ -34,7 +29,16 @@ class ActionManager:
         self.my_dog.speak("powerup")
         await self.perform_action('sit,look_forward')
         self.lightbar_breath()
-        
+    
+    def reset_state_for_new_persona(self):
+        self.sound_direction_status = ""
+        self.vision_description = ""
+        self.isTalkingMovement = False
+        self.isTakingAction = False
+        self.state = RobotDogState()
+        self.last_change_time = 0  # Track the last time a change was noticed
+        self.last_reminder_time = time.time()  # Track the last time we reminded of the default goal
+
     def detect_sound_direction(self):
         """Reads the dog's ear sensors to find out from which direction the sound came."""
         if self.my_dog.ears.isdetected():
@@ -632,6 +636,7 @@ class ActionManager:
         new_persona = None # Initialize new_persona
         try:
             new_persona = await generate_persona(persona_description)
+            self.reset_state_for_new_persona()
             # Pass the full persona object, not just the name
             await client.reconnect(new_persona['name'], new_persona)
         finally:
@@ -644,14 +649,15 @@ class ActionManager:
         self.isTakingAction = False
         return "success"
 
-    async def handle_persona_switch_effects(self, reconnect_callback, persona_name):
+    async def handle_persona_switch_effects(self, persona_name, client):
         """Handles the visual and audio effects during a persona switch."""
         print(f"[ActionManager] Handling persona switch effects for: {persona_name}")
         self.isTakingAction = True
         self.lightbar_boom('green')
         music = speak(self.my_dog, "audio/angelic_short.mp3")
         try:
-            await reconnect_callback(persona_name)
+            self.reset_state_for_new_persona()
+            await client.reconnect(persona_name)
         finally:
             if music:
                 music.music_stop()
@@ -666,8 +672,8 @@ class ActionManager:
         Also periodically reminds the model of its default goal if it's been inactive.
         """
         is_change = False
-        last_change_time = 0  # Track the last time a change was noticed
-        last_reminder_time = time.time()  # Track the last time we reminded of the default goal
+        self.last_change_time = 0  # Track the last time a change was noticed
+        self.last_reminder_time = time.time()  # Track the last time we reminded of the default goal
         reminder_interval = random.randint(20, 40)  # Randomized interval between 20-40 seconds
         
         while True:
@@ -684,14 +690,14 @@ class ActionManager:
 
                 # Ignore changes if within the last 5 seconds or if talking movement is active
                 current_time = time.time()
-                if is_change and (current_time - last_change_time < 5 or self.isTalkingMovement):
+                if is_change and (current_time - self.last_change_time < 5 or self.isTalkingMovement):
                     is_change = False
 
                 new_goal = ""
 
                 if is_change and (not self.isTalkingMovement):
                     new_goal = ""
-                    last_change_time = current_time  # Update the last change time
+                    self.last_change_time = current_time  # Update the last change time
                     if petting_changed:
                         if (current_time - self.state.petting_detected_at) < 10:
                             new_goal = "You are being petted!"
@@ -712,17 +718,17 @@ class ActionManager:
                         self.state.goal = new_goal + " You must say and do something in reaction to this."
                         print(f"Goal: {self.state.goal}")
                         await client.send_awareness()
-                        last_reminder_time = current_time  # Reset reminder timer when we have a new goal
+                        self.last_reminder_time = current_time  # Reset reminder timer when we have a new goal
                 else:
                     # Check if we need to remind of default goal
-                    elapsed_since_reminder = current_time - last_reminder_time
+                    elapsed_since_reminder = current_time - self.last_reminder_time
                     if (not self.isTalkingMovement and 
                         not self.isTakingAction and
                         elapsed_since_reminder > reminder_interval and 
                         client.persona is not None):
                         
                         await self.remind_of_default_goal(client)
-                        last_reminder_time = current_time
+                        self.last_reminder_time = current_time
                         reminder_interval = random.randint(45, 60)  # Randomize next interval
 
                 await asyncio.sleep(0.3)

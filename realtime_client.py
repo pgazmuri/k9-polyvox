@@ -264,7 +264,7 @@ class RealtimeClient:
         """
         Tells GPT about how we want to handle input/output, instructions, tools, etc.
         """
-        character_by_name = { char["name"]: char for char in personas }
+        character_by_name = {char["name"]: char for char in personas}
         self.persona = character_by_name[persona]
         
         # Get available actions from action manager
@@ -278,6 +278,132 @@ class RealtimeClient:
         # Pre-format strings to avoid issues with backslashes inside f-string expressions
         persona_list_str = "\n".join(persona_descriptions)
         available_actions_str = json.dumps(available_actions)
+
+        tools = [
+            {
+                "type": "function",
+                "name": "perform_action",
+                "description": "Performs one or more robotic actions simultaneously (comma-separated). Essential for expressing the persona physically.",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "action_name": {
+                            "type": "string",
+                            "description": f"The name of the action(s) to perform. Available actions: {', '.join(available_actions)}"
+                        }
+                    },
+                    "required": ["action_name"]
+                }
+            },
+            {
+                "type": "function",
+                "name": "get_system_status",
+                "description": "Retrieves sensor and system status, including body pitch, battery voltage, cpu utilization, last sound direction and more.",
+                "parameters": {
+                    "type": "object",
+                    "properties": {},
+                    "required": []
+                }
+            },
+            {
+                "type": "function",
+                "name": "get_awareness_status",
+                "description": "Retrieves text telling you what the robot dog just noticed.",
+                "parameters": {
+                    "type": "object",
+                    "properties": {},
+                    "required": []
+                }
+            },
+            {
+                "type": "function",
+                "name": "look_and_see",
+                "description": "Retrieves text describing what the robot dog sees through its camera.",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "question": {
+                            "type": "string",
+                            "description": "A question about what the dog sees, if the user makes such a request."
+                        }
+                    },
+                    "required": [] 
+                }
+            },
+            {
+                "type": "function",
+                "name": "switch_persona",
+                "description": "Switches the robot's personality to one of the available personas listed in the instructions.",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "persona_name": {
+                            "type": "string",
+                            "description": f"The exact name of the persona to switch to. Options: {', '.join([p['name'] for p in personas])}"
+                        }
+                    },
+                    "required": ["persona_name"]
+                }
+            },
+            {
+                "type": "function",
+                "name": "set_volume",
+                "description": "Sets the speech volume.",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "volume_level": {
+                            "type": "number",
+                            "description": "The volume number. From 0.0 (sound off) to 3.0 (highest volume)."
+                        }
+                    },
+                    "required": ["volume_level"]
+                }
+            },
+            {
+                "type": "function",
+                "name": "create_new_persona",
+                "description": "Generates and switches to a new persona based on the description provided.",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "persona_description": {
+                            "type": "string",
+                            "description": "A description of the persona, including name and personality traits."
+                        }
+                    },
+                    "required": ["persona_description"]
+                }
+            },
+            {
+                "type": "function",
+                "name": "set_goal",
+                "description": "Sets a new goal or motivation that you will be reminded to pursue.",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "goal": {
+                            "type": "string",
+                            "description": "The new goal you will be reminded to pursue on occasion."
+                        }
+                    },
+                    "required": ["goal"]
+                }
+            }
+        ]
+
+        # Add the pull_latest_and_restart function if the persona is "Vektor"
+        if persona == "Vektor":
+            tools.append({
+                "type": "function",
+                "name": "pull_latest_code_and_restart",
+                "description": "Pulls the latest code from Git and restarts the robot's process. DO NOT CALL UNLESS EXPLICITLY REQUESTED, AND ALWAYS CONFIRM USER INTENT BEFORE PERFORMING",
+                "parameters": {
+                    "type": "object",
+                    "properties": {},
+                    "required": []
+                }
+            })
 
         session_config = {
             "session": {
@@ -299,10 +425,15 @@ The following personas are available for switching via the `switch_persona` func
 # Actions are Key:
 - Use the `perform_action` function frequently to make the robot dog move, express itself, and interact physically. This is crucial for bringing the persona to life.
 - Available actions: {available_actions_str}
-- You can combine actions with commas (e.g., 'walk_forward,wag_tail').
+- You can combine actions to be performed at the same time by comma separating them (e.g., 'walk_forward,wag_tail').
 - Aim to include relevant actions in most of your responses. Talk before and after actions to make interactions feel natural.
 - Use 'nod' and 'shake_head' actions to show agreement or disagreement.
 - Your default/home position is 'sit'. Try to return to 'sit' after complex movements unless actively doing something else.
+
+# look_and_see:
+- Use the `look_and_see` function to describe what you can see in the direction your head is pointing. You can ask questions about the environment or objects in view.
+- When asked to look at something, use the `look_and_see` function to get a description of what you see.
+- Perform action to move your head before look_and_see in a certain direction. e.g. if asked to "look to your left", perform_action('look_left') and only then look_and_see
 
 # Interaction Style:
 - Keep spoken responses relatively concise, but engaging and in character. Let your actions do a lot of the talking.
@@ -326,122 +457,7 @@ The following personas are available for switching via the `switch_persona` func
                 "temperature": 0.6,
                 "max_response_output_tokens": 4096,
                 "tool_choice": "auto",
-                "tools": [
-                    {
-                        "type": "function",
-                        "name": "perform_action",
-                        "description": "Performs one or more robotic actions simultaneously (comma-separated). Essential for expressing the persona physically.",
-                        "parameters": {
-                            "type": "object",
-                            "properties": {
-                                "action_name": {
-                                    "type": "string",
-                                    "description": f"The name of the action(s) to perform. Available actions: {', '.join(available_actions)}"
-                                }
-                            },
-                            "required": ["action_name"]
-                        }
-                    },
-                    {
-                        "type": "function",
-                        "name": "get_system_status",
-                        "description": "Retrieves sensor and system status, including body pitch, battery voltage, cpu utilization, last sound direction and more.",
-                        "parameters": {
-                            "type": "object",
-                            "properties": {
-                                
-                            },
-                            "required": []
-                        }
-                    },
-                    {
-                        "type": "function",
-                        "name": "get_awareness_status",
-                        "description": "Retrieves text telling you what the robot dog just noticed.",
-                        "parameters": {
-                            "type": "object",
-                            "properties": {
-                                
-                            },
-                            "required": []
-                        }
-                    },
-                    {
-                        "type": "function",
-                        "name": "look_and_see",
-                        "description": "Retrieves text describing what the robot dog sees through its camera.",
-                        "parameters": {
-                            "type": "object",
-                            "properties": {
-                                "question": {
-                                    "type": "string",
-                                    "description": "A question about what the dog sees, if the user makes such a request."
-                                }
-                            },
-                            "required": [] 
-                        }
-                    },
-                    {
-                        "type": "function",
-                        "name": "switch_persona",
-                        "description": "Switches the robot's personality to one of the available personas listed in the instructions.",
-                        "parameters": {
-                            "type": "object",
-                            "properties": {
-                                "persona_name": {
-                                    "type": "string",
-                                    "description": f"The exact name of the persona to switch to. Options: {', '.join([p['name'] for p in personas])}"
-                                }
-                            },
-                            "required": ["persona_name"]
-                        }
-                    },
-                    {
-                        "type": "function",
-                        "name": "set_volume",
-                        "description": "Sets the speech volume.",
-                        "parameters": {
-                            "type": "object",
-                            "properties": {
-                                "volume_level": {
-                                    "type": "number",
-                                    "description": "The volume number. From 0.0 (sound off) to 3.0 (highest volume)."
-                                }
-                            },
-                            "required": ["volume_level"]
-                        }
-                    },
-                    {
-                        "type": "function",
-                        "name": "create_new_persona",
-                        "description": "Generates and switches to a new persona based on the description provided.",
-                        "parameters": {
-                            "type": "object",
-                            "properties": {
-                                "persona_description": {
-                                    "type": "string",
-                                    "description": "A description of the persona, including name and personality traits."
-                                }
-                            },
-                            "required": ["persona_description"]
-                        }
-                    },
-                    {
-                        "type": "function",
-                        "name": "set_goal",
-                        "description": "Sets a new goal or motivation that you will be reminded to pursue.",
-                        "parameters": {
-                            "type": "object",
-                            "properties": {
-                                "goal": {
-                                    "type": "string",
-                                    "description": "The new goal you will be reminded to pursue on occasion."
-                                }
-                            },
-                            "required": ["goal"]
-                        }
-                    }
-                ]
+                "tools": tools
             }
         }
         await self.send("session.update", session_config)

@@ -1,4 +1,5 @@
 import json
+import os
 import sys # For quitting the program
 
 class FunctionCallManager:
@@ -7,13 +8,12 @@ class FunctionCallManager:
     to the correct local Python functions in ActionManager.
     """
 
-    def __init__(self, action_manager, reconnect_callback, client):
+    def __init__(self, action_manager, client):
         """
         :param action_manager: an instance of ActionManager
         :param reconnect_callback: function to force a new connection (and optionally switch persona)
         """
         self.action_manager = action_manager
-        self.reconnect = reconnect_callback
         self.client = client
 
     async def handle_function_call(self, function_call):
@@ -37,11 +37,25 @@ class FunctionCallManager:
                 print(f"[FunctionCallManager] Result of 'get_system_status': {result}")
                 return result
 
-            elif func_name == 'shut_down':
+            elif func_name == 'pull_latest_code_and_restart':
                 print("[FunctionCallManager] Shutting down...")
-                sys.exit()
-                sys.exit()
-                sys.exit()
+                # pull latest from git, schedule my own restart, and kill my own process with sudo kill -9 $PID
+                try:
+                    self.action_manager.perform_action("lie")
+                    # Pull the latest changes from Git
+                    os.system("git pull")
+
+                    # Schedule a restart of the current process after 3 seconds
+                    python_executable = sys.executable
+                    script_path = sys.argv[0]
+                    os.system(f"(sleep 3; {python_executable} {script_path}) &")
+
+                    # Kill the current process
+                    os.kill(os.getpid(), 9)
+                except Exception as e:
+                    print(f"[FunctionCallManager] Error during shutdown: {e}")
+
+
 
             elif func_name == 'get_awareness_status':
                 print("[FunctionCallManager] Getting awareness status...")
@@ -58,7 +72,7 @@ class FunctionCallManager:
             
             elif func_name == 'set_goal':
                 arguments = json.loads(function_call['arguments'])
-                self.action_manager.state.goal = arguments.get("goal", "You are unsure of your goal. Ask what you should do next, or not.")
+                self.action_manager.state.goal = arguments.get("goal", "You are unsure of your goal. Ask a question or make a statement in keeping with your persona and the current state.")
                 print(f"[FunctionCallManager] Goal set to: {self.action_manager.state.goal}")
                 result = "success"
                 return result
@@ -81,9 +95,11 @@ class FunctionCallManager:
             elif func_name == 'switch_persona':
                 arguments = json.loads(function_call['arguments'])
                 persona_name = arguments.get("persona_name", "Vektor Pulsecheck")
+                if self.client.persona['name'] == persona_name:
+                    return "You are already in this persona."
                 print(f"[FunctionCallManager] Switching persona to: {persona_name}")
                 # Call the new method in ActionManager to handle effects and reconnect
-                await self.action_manager.handle_persona_switch_effects(self.reconnect, persona_name)
+                await self.action_manager.handle_persona_switch_effects(persona_name, self.client)
                 result = "persona_switched"
                 print(f"[FunctionCallManager] Result of 'switch_persona': {result}")
                 return result
