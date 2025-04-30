@@ -38,8 +38,8 @@ class AudioManager:
         # self.input_device_index = self._find_device_index("pulse")  # Example
         # self.output_device_index = self._find_device_index("pulse")  # Example
 
-        print(f"[AudioManager] Input Device Index: {self.input_device_index}")
-        print(f"[AudioManager] Output Device Index: {self.output_device_index}")
+        # print(f"[AudioManager] Input Device Index: {self.input_device_index}")
+        # print(f"[AudioManager] Output Device Index: {self.output_device_index}")
 
     
     def clear_audio_buffer(self):
