@@ -147,11 +147,13 @@ class AudioManager:
                 # Resample from input_rate (48kHz) to output_rate (24kHz) right here
                 resampled_data = resampy.resample(audio_data, self.input_rate, self.output_rate)
                 resampled_bytes = resampled_data.astype(np.int16).tobytes()
-                
-                # Use call_soon_threadsafe to safely put resampled data onto the asyncio queue from this thread
-                self.loop.call_soon_threadsafe(
-                    lambda data=resampled_bytes: asyncio.create_task(self._safe_queue_put(data))
-                )
+
+                # Use asyncio.run_coroutine_threadsafe to schedule the coroutine
+                if self.loop.is_running():
+                    asyncio.run_coroutine_threadsafe(self._safe_queue_put(resampled_bytes), self.loop)
+                # else:
+                #     print("[AudioManager] Loop not running, skipping queue put.")
+
         except Exception as e:
             # Log the exception details
             print(f"[AudioManager] Error adding audio to outgoing_data_queue: {e}")
@@ -165,6 +167,11 @@ class AudioManager:
     
     async def _safe_queue_put(self, data):
         """Safely put data on the outgoing queue, handling queue full situations."""
+        # Check if the loop is still running before proceeding
+        if not self.loop.is_running():
+            # print("[AudioManager] Loop stopped, discarding audio data in _safe_queue_put.")
+            return
+
         try:
             # Try to put without blocking; if queue is full, drop the frame
             await asyncio.wait_for(self.outgoing_data_queue.put(data), timeout=0.01)
@@ -174,7 +181,9 @@ class AudioManager:
             if self.dropped_frames % 100 == 0:
                 print(f"[AudioManager] Dropped {self.dropped_frames} frames due to queue full")
         except Exception as e:
-            print(f"[AudioManager] Error in _safe_queue_put: {e}")
+            # Check again if the loop is running before logging, as errors might occur during shutdown
+            if self.loop.is_running():
+                print(f"[AudioManager] Error in _safe_queue_put: {e}")
 
     def save_speaker_audio(self, resampled_bytes):
         # # Buffer audio and save the most recent 10 seconds to a file
