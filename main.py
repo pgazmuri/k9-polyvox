@@ -88,6 +88,11 @@ async def shutdown(signal_obj=None):
     print("Multiprocessing children at shutdown:")
     for p in multiprocessing.active_children():
         print(f" - {p.name} (pid={p.pid}, alive={p.is_alive()})")
+        #shut it down and log it
+        p.terminate()
+        print(f" - {p.name} (pid={p.pid}, alive={p.is_alive()}) after termination")
+
+    
 
 async def main():
     # Make variables global so they can be accessed in shutdown handler

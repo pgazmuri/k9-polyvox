@@ -54,6 +54,7 @@ class ActionManager:
         self.my_dog.close()
         try:
             self.my_dog.sensory_process.stop()
+            sleep(.5)  # Wait for the process to stop
         except Exception as e:
             print(f"[ActionManager] Error stopping sensory process: {e}")
 
