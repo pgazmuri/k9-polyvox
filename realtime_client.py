@@ -78,7 +78,7 @@ class RealtimeClient:
         await self.send("response.create", {
             "response": {
                 "instructions": instructions,
-                "tool_choice": "required"
+                "tool_choice": "auto"
             }
         })
 
@@ -157,6 +157,7 @@ class RealtimeClient:
                     
                     elif msg_type == 'response.created':
                         #clear the audio buffer when a new response is created
+                        print(f"[RealtimeClient] New response created {response}, clearing audio buffer...")
                         self.audio_manager.clear_audio_buffer()
 
                     elif msg_type == 'response.audio_transcript.delta':
@@ -199,7 +200,7 @@ class RealtimeClient:
                     #     print(f"[RealtimeClient] Message content: {response}")
 
                 except Exception as e:
-                    print(f"[RealtimeClient] Error parsing message: {e}")
+                    print(f"[RealtimeClient] Error parsing response from Realtime API: {e} | Message: {response}")
         except asyncio.CancelledError:
             print("[RealtimeClient] Receive loop cancelled.")
             raise
