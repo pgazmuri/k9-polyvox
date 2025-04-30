@@ -72,8 +72,10 @@ class ActionManager:
     async def initialize_posture(self):
         """Sets an initial posture after power up."""
         print("[ActionManager] Initializing posture...")
-        self.my_dog.speak("powerup")
+        self.power_up_sequence()
+        music = speak(self.my_dog, "powerup")
         await self.perform_action('sit,look_forward')
+        music.music_stop()
         self.lightbar_breath()
     
     def reset_state_for_new_persona(self):
