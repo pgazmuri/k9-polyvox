@@ -39,6 +39,24 @@ class FunctionCallManager:
                 result = await self.get_system_status()
                 return result
 
+            elif func_name == 'shut_down':
+                print("[FunctionCallManager] Shutting down...")
+                try:
+                    # Assuming python_executable and script_path are defined earlier
+                    script_path = os.path.abspath(os.path.join(os.path.dirname(__file__), 'main.py'))
+                    python_executable = sys.executable
+
+                    print(f"Sending SIGTERM to process {os.getpid()} to initiate shutdown.")
+                    # Send SIGTERM to trigger the shutdown handler in main.py
+                    os.kill(os.getpid(), signal.SIGTERM)
+                    
+                    # Return success, the process will exit via the signal handler
+                    return json.dumps({"status": "success", "message": "shutdown initiated"})
+
+                except Exception as e:
+                    print(f"[FunctionCallManager] Error during pull/restart: {e}")
+                    return json.dumps({"status": "error", "message": str(e)})
+                
             elif func_name == 'pull_latest_code_and_restart':
                 print("[FunctionCallManager] Attempting to pull latest code and restart...")
                 try:
@@ -51,7 +69,7 @@ class FunctionCallManager:
                     
                     print(f"Scheduling restart: {python_executable} {script_path}")
                     # Schedule restart command to run after a delay
-                    os.system(f'(sleep 8; "{python_executable}" "{script_path}") &')
+                    os.system(f'(sleep 8; "{python_executable}" "{script_path}")')
 
                     print(f"Sending SIGTERM to process {os.getpid()} to initiate shutdown.")
                     # Send SIGTERM to trigger the shutdown handler in main.py
@@ -302,6 +320,16 @@ admin_tools = [{
                 "type": "function",
                 "name": "pull_latest_code_and_restart",
                 "description": "Pulls the latest code from Git and restarts the robot's process. DO NOT CALL UNLESS EXPLICITLY REQUESTED, AND ALWAYS CONFIRM USER INTENT BEFORE PERFORMING",
+                "parameters": {
+                    "type": "object",
+                    "properties": {},
+                    "required": []
+                }
+                },
+                {
+                "type": "function",
+                "name": "shut_down",
+                "description": "Shuts down your main process. DO NOT CALL UNLESS EXPLICITLY REQUESTED, AND ALWAYS CONFIRM USER INTENT BEFORE PERFORMING",
                 "parameters": {
                     "type": "object",
                     "properties": {},
