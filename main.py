@@ -89,8 +89,10 @@ async def shutdown(signal_obj=None):
     for p in multiprocessing.active_children():
         print(f" - {p.name} (pid={p.pid}, alive={p.is_alive()})")
         #shut it down and log it
-        p.terminate()
+        os.kill(p.pid, signal.SIGKILL)
+        time.sleep(0.1)  # Give it a moment to terminate
         print(f" - {p.name} (pid={p.pid}, alive={p.is_alive()}) after termination")
+
 
     
 
