@@ -1,6 +1,7 @@
 import json
 import os
-import sys # For quitting the program
+import sys
+import signal
 
 class FunctionCallManager:
     """
@@ -39,33 +40,29 @@ class FunctionCallManager:
                 return result
 
             elif func_name == 'pull_latest_code_and_restart':
-                print("[FunctionCallManager] Shutting down...")
-                # pull latest from git, schedule my own restart, and kill my own process with sudo kill -9 $PID
+                print("[FunctionCallManager] Attempting to pull latest code and restart...")
                 try:
-                    self.action_manager.perform_action("lie")
-                    # Pull the latest changes from Git
-                    os.system("git pull")
-
-                    # Schedule a restart of the current process after 3 seconds
+                    # Assuming python_executable and script_path are defined earlier
+                    script_path = os.path.abspath(os.path.join(os.path.dirname(__file__), 'main.py'))
                     python_executable = sys.executable
-                    script_path = sys.argv[0]
-                    # os.system(f"(sleep 3; sudo kill -9 {os.getpid()}) &")
-                    # os.system(f"(sleep 5; {python_executable} {script_path}) &")
-                    
-                    #try replacing the process with a new one
-                    os.execv(python_executable, [python_executable] + sys.argv)
-                    
-                    #this seems to seng a signal to the process to quit, but it doesn't seem to work, leaves the camera in a bad state
-                    # sys.exit()
-                    # sys.exit()
-                    # sys.exit()
 
-                    # Kill the current process
-                    # os.kill(os.getpid(), 9)
+                    print("Pulling latest code...")
+                    os.system("git pull")
+                    
+                    print(f"Scheduling restart: {python_executable} {script_path}")
+                    # Schedule restart command to run after a delay
+                    os.system(f'(sleep 8; "{python_executable}" "{script_path}") &')
+
+                    print(f"Sending SIGTERM to process {os.getpid()} to initiate shutdown.")
+                    # Send SIGTERM to trigger the shutdown handler in main.py
+                    os.kill(os.getpid(), signal.SIGTERM)
+                    
+                    # Return success, the process will exit via the signal handler
+                    return json.dumps({"status": "success", "message": "Pull successful, shutdown initiated, restart scheduled."})
+
                 except Exception as e:
-                    print(f"[FunctionCallManager] Error during shutdown: {e}")
-
-
+                    print(f"[FunctionCallManager] Error during pull/restart: {e}")
+                    return json.dumps({"status": "error", "message": str(e)})
 
             elif func_name == 'get_awareness_status':
                 result = await self.get_awareness_status()
@@ -126,9 +123,7 @@ class FunctionCallManager:
         Shuts down the robot dog for maintenance.
         """
         print("[FunctionCallManager] Shutting down...")
-        sys.exit()
-        sys.exit()
-        sys.exit()
+        os.kill(os.getpid(), signal.SIGTERM)
 
     async def get_system_status(self):
         """
