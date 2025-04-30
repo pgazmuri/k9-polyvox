@@ -35,6 +35,10 @@ class RealtimeClient:
         self.action_manager = action_manager
         self.is_shutdown = False
 
+        self._receive_task = None
+        self._function_calls_task = None
+        self._outgoing_audio_task = None
+
         self.ws = None
         self.function_call_queue = asyncio.Queue()
 
@@ -52,10 +56,10 @@ class RealtimeClient:
             additional_headers=self.headers
         )
         print("[RealtimeClient] Connected to Realtime API")
-        asyncio.create_task(self.receive())  # Start receiving in the background
+        self._receive_task = asyncio.create_task(self.receive()) # Start the receive loop
         # 4. Start processing function calls and audio from GPT
-        asyncio.create_task(self.process_function_calls())
-        asyncio.create_task(self.process_outgoing_audio())
+        self._function_calls_task = asyncio.create_task(self.process_function_calls())
+        self._outgoing_audio_task = asyncio.create_task(self.process_outgoing_audio())
         
     async def send_awareness(self):
         #we expect the robot to repond with something, so we chould clear the audio outbound queue...
@@ -75,6 +79,15 @@ class RealtimeClient:
         if self.ws:
             await self.ws.close()
             print("[RealtimeClient] WebSocket closed.")
+        
+        # Cancel and await all background tasks
+        for task in [self._receive_task, self._function_calls_task, self._outgoing_audio_task]:
+            if task and not task.done():
+                task.cancel()
+                try:
+                    await task
+                except asyncio.CancelledError:
+                    pass
 
     async def send(self, event_type, data):
         """Helper to serialize & send a JSON message to server."""
@@ -173,6 +186,9 @@ class RealtimeClient:
 
                 except Exception as e:
                     print(f"[RealtimeClient] Error parsing message: {e}")
+        except asyncio.CancelledError:
+            print("[RealtimeClient] Receive loop cancelled.")
+            raise
         except websockets.exceptions.ConnectionClosedError as e:
             print(f"[RealtimeClient] Connection closed: {e}")
         except Exception as e:
