@@ -30,10 +30,14 @@ audio_manager = None
 client = None
 is_running = True
 detect_status_task = None  # Add a global variable for the task handle
+is_shutting_down = False  # Add this global flag
 
 async def shutdown(signal=None):
     """Clean shutdown of services when program exits"""
-    global is_running, detect_status_task  # Ensure we modify the global variable
+    global is_running, detect_status_task, is_shutting_down
+    if is_shutting_down:
+        return
+    is_shutting_down = True
     if signal:
         print(f"Received exit signal...")
     
@@ -70,7 +74,7 @@ async def shutdown(signal=None):
 
 async def main():
     # Make variables global so they can be accessed in shutdown handler
-    global action_manager, audio_manager, client, detect_status_task  # Add detect_status_task
+    global action_manager, audio_manager, client, detect_status_task
     
     # Initialize PiDog actions
     action_manager = ActionManager()
@@ -120,11 +124,11 @@ async def main():
     except KeyboardInterrupt:
         print("Keyboard interrupt received...")
     finally:
-        await shutdown()
+        if not is_shutting_down:
+            await shutdown()
 
 if __name__ == "__main__":
-    # Register signal handlers for graceful shutdown
+    loop = asyncio.get_event_loop()
     for sig in (signal.SIGINT, signal.SIGTERM):
-        signal.signal(sig, lambda s, _: asyncio.create_task(shutdown(s)))
-    
-    asyncio.run(main())
+        loop.add_signal_handler(sig, lambda s=sig: asyncio.create_task(shutdown(s)))
+    loop.run_until_complete(main())
