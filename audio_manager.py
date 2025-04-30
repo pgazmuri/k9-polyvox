@@ -192,7 +192,7 @@ class AudioManager:
             if not hasattr(self, "_audio_buffer"):
                 self._audio_buffer = bytearray()
 
-            if not self.incoming_audio_queue.empty() and not self.action_manager.isTalkingMovement:
+            if len(self.incoming_audio_queue) > 0 and not self.action_manager.isTalkingMovement:
                 self.action_manager.isTalkingMovement = True
                 self.loop.call_soon_threadsafe(asyncio.create_task, self.action_manager.start_talking())
 
