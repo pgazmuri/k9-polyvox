@@ -31,8 +31,8 @@ async def is_person_detected():
 def capture_image(path: str = "pidog_vision"):
     try:
         # Ensure the directory exists
-        directory = "~/k9-polyvox"
-        full_path = directory + "/pidog_vision.jpg"
+        directory = "."
+        full_path = directory + f"/{path}.jpg"
         # Attempt to take a photo
         Vilib.take_photo(photo_name=path, path=directory)
         print(f"Photo captured and saved to {full_path}")
