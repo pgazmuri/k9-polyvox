@@ -66,13 +66,13 @@ async def shutdown(signal_obj=None):
     if audio_manager:
         print("Cleaning up audio resources...")
         # AudioManager.close() is synchronous but should signal async tasks
-        await asyncio.to_thread(audio_manager.close)
+        audio_manager.close()
 
     # 4. Clean up action manager (including PiDog threads)
     if action_manager:
         print("Cleaning up action manager...")
         # ActionManager.close() is synchronous
-        await asyncio.to_thread(action_manager.close)
+        action_manager.close()
 
     print("Shutdown sequence complete.")
 
