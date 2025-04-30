@@ -19,7 +19,7 @@ else:
     from preset_actions import *
 
 from preset_actions import speak # Explicitly import speak as we still want to hear sounds
-from t2_vision import TakePictureAndReportBack, is_person_detected
+from t2_vision import TakePictureAndReportBack, is_person_detected, close_camera
 from persona_generator import generate_persona
 
 from display_manager import display_message, display_status
@@ -49,6 +49,7 @@ class ActionManager:
         self.reset_state_for_new_persona()
 
     def close(self):
+        close_camera()
         self.perform_action('lie')
         self.my_dog.close()
 
