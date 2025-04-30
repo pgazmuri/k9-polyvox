@@ -71,8 +71,11 @@ async def shutdown(signal_obj=None):
     # 4. Clean up action manager (including PiDog threads)
     if action_manager:
         print("Cleaning up action manager...")
-        # ActionManager.close() is synchronous
-        action_manager.close()
+        try:
+            action_manager.close()
+        except SystemExit as e:
+            print(f"[Shutdown] PiDog called sys.exit({e.code}), ignoring to allow clean shutdown.")
+
 
     print("Shutdown sequence complete.")
 
