@@ -35,7 +35,7 @@ Make sure you can run the PiDog demo scripts and that your hardware is working.
 ### 2. Clone This Repository
 
 ```sh
-git clone https://github.com/YOUR_USERNAME/k9-polyvox.git
+git clone https://github.com/pgazmuri/k9-polyvox
 cd k9-polyvox
 ```
 
@@ -44,7 +44,7 @@ cd k9-polyvox
 It's recommended to use Python 3.7+.
 
 ```sh
-pip install -r requirements.txt
+sudo pip install -r requirements.txt --break-system-packages
 ```
 
 ### 4. Configure API Keys
@@ -92,7 +92,7 @@ The robot will boot, connect to OpenAI, and begin interacting. Use Ctrl+C to sto
 
 - If you see errors related to the display or speaker, ensure the correct environment variables are set.
 - Make sure your PiDog hardware is powered and connected.
-- For audio device issues, check your ALSA/PulseAudio configuration and use the included device listing scripts (`print_audio.py`, `pyaudio_device_list.py`).
+- The app will use your default audio source and sink.  You can use pactl to view and set devices.
 
 ## License
 
