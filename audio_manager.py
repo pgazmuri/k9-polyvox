@@ -41,6 +41,20 @@ class AudioManager:
         print(f"[AudioManager] Input Device Index: {self.input_device_index}")
         print(f"[AudioManager] Output Device Index: {self.output_device_index}")
 
+    
+    def clear_audio_buffer(self):
+        """Clears the outgoing audio data queue."""
+        print("[AudioManager] Clearing outgoing audio buffer...")
+        dropped_count = 0
+        while not self.outgoing_data_queue.empty():
+            try:
+                self.outgoing_data_queue.get_nowait()
+                dropped_count += 1
+            except asyncio.QueueEmpty:
+                break
+        print(f"[AudioManager] Cleared {dropped_count} items from outgoing queue.")
+
+
     def _find_device_index(self, device_name):
         """Find the device index for the given device name."""
         for i in range(self.p.get_device_count()):
