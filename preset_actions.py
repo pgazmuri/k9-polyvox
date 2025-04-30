@@ -293,9 +293,9 @@ def feet_shake(my_dog, step=None):
     current_legs = list.copy(my_dog.leg_current_angles)
 
     L1 = list.copy(current_legs)
-    L2 = list.copy(current_legs)
     L1[0] += 10
     L1[1] -= 25
+    L2 = list.copy(current_legs)
     L2[2] -= 10
     L2[3] += 25
 
@@ -671,6 +671,54 @@ def stretch(my_dog):
     my_dog.head_move_raw([[0, 0, -35]], immediately=False, speed=68)
     my_dog.wait_all_done()
 
+def wag_tail(my_dog, step_count=5, speed=100):
+    """Makes the dog wag its tail"""
+    my_dog.do_action('wag_tail', step_count=step_count, speed=speed)
+
+def head_up_down(my_dog):
+    """Makes the dog move its head up and down"""
+    my_dog.do_action('head_up_down')
+
+def tilt_head_left(my_dog):
+    """Makes the dog tilt its head to the left"""
+    my_dog.do_action('tilting_head_left')
+
+def tilt_head_right(my_dog):
+    """Makes the dog tilt its head to the right"""
+    my_dog.do_action('tilting_head_right')
+
+def walk_forward(my_dog, step_count=5, speed=100):
+    """Makes the dog walk forward"""
+    my_dog.do_action('forward', step_count=step_count, speed=speed)
+
+def walk_backward(my_dog, step_count=5, speed=100):
+    """Makes the dog walk backward"""
+    my_dog.do_action('backward', step_count=step_count, speed=speed)
+
+def lie_down(my_dog):
+    """Makes the dog lie down"""
+    my_dog.do_action('lie')
+
+def stand_up(my_dog, speed=80):
+    """Makes the dog stand up"""
+    my_dog.do_action('stand', speed=speed)
+    
+def sit_down(my_dog, speed=80):
+    """Makes the dog sit down"""
+    my_dog.do_action('sit', speed=speed)
+
+def turn_left(my_dog, step_count=5, speed=100):
+    """Makes the dog turn left"""
+    my_dog.do_action('turn_left', step_count=step_count, speed=speed)
+
+def turn_right(my_dog, step_count=5, speed=100):
+    """Makes the dog turn right"""
+    my_dog.do_action('turn_right', step_count=step_count, speed=speed)
+
+def doze_off(my_dog, speed=100):
+    """Makes the dog doze off"""
+    my_dog.do_action('doze_off', speed=speed)
+
 if __name__ == "__main__":
     from pidog import Pidog
     import readchar
@@ -693,7 +741,7 @@ if __name__ == "__main__":
     #     sit_2_stand(my_dog, 75)
     #     sleep(2)
 
-    # # --- nod ---
+    # # --- nod --- 
     # while True:
     #     nod(my_dog, pitch_comp=-35, amplitude=30, step=2, speed=95)
     #     # break

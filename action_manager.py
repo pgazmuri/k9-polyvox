@@ -231,16 +231,16 @@ class ActionManager:
         This method chooses which action to perform based on the new status.
         """
         if status != 'N':
-            self.my_dog.do_action('wag_tail', speed=100)
+            wag_tail(self.my_dog)
         
         if status == 'LS':   # front to back
-            self.my_dog.do_action('head_up_down')
+            head_up_down(self.my_dog)
         elif status == 'RS': # back to front
             attack_posture(self.my_dog)
         elif status == 'R':
-            self.my_dog.do_action('tilting_head_right')
+            tilt_head_right(self.my_dog)
         elif status == 'L':
-            self.my_dog.do_action('tilting_head_left')
+            tilt_head_left(self.my_dog)
 
     def get_status(self):
         """
@@ -420,7 +420,7 @@ class ActionManager:
 
         for action in actions:
             if action == 'wag_tail':
-                self.my_dog.do_action('wag_tail', step_count=5, speed=100)
+                wag_tail(self.my_dog, step_count=5, speed=100)
             elif action == 'bark':
                 bark(self.my_dog)
             elif action == 'bark_harder':
@@ -443,25 +443,25 @@ class ActionManager:
                 await self.reset_head()
             elif action == 'scratch':
                 if self.state.posture == "standing":
-                    self.my_dog.do_action('sit')
+                    sit_down(self.my_dog)
                 scratch(self.my_dog)
                 self.state.posture = "sitting"
                 await self.reset_head()
             elif action == 'handshake':
                 if self.state.posture == "standing":
-                    self.my_dog.do_action('sit')
+                    sit_down(self.my_dog)
                 hand_shake(self.my_dog)
                 self.state.posture = "sitting"
                 await self.reset_head()
             elif action == 'high_five':
                 if self.state.posture == "standing":
-                    self.my_dog.do_action('sit')
+                    sit_down(self.my_dog)
                 high_five(self.my_dog)
                 self.state.posture = "sitting"
                 await self.reset_head()
             elif action == 'lick_hand':
                 if self.state.posture == "standing":
-                    self.my_dog.do_action('sit')
+                    sit_down(self.my_dog)
                 lick_hand(self.my_dog)
                 self.state.posture = "sitting"
                 await self.reset_head()
@@ -529,48 +529,48 @@ class ActionManager:
             elif action == 'walk_forward':
                 if self.state.posture == "sitting":
                     sit_2_stand(self.my_dog)
-                self.my_dog.do_action('forward', step_count=5, speed=100)
+                walk_forward(self.my_dog, step_count=5, speed=100)
                 self.state.posture = "standing"
                 await self.reset_head()
             elif action == 'walk_backward':
                 if self.state.posture == "sitting":
                     sit_2_stand(self.my_dog)
-                self.my_dog.do_action('backward', step_count=5, speed=100)
+                walk_backward(self.my_dog, step_count=5, speed=100)
                 self.state.posture = "standing"
                 await self.reset_head()
             elif action == 'lie':
-                self.my_dog.do_action('lie')
+                lie_down(self.my_dog)
                 self.state.posture = "standing"
                 await self.reset_head()
             elif action == 'stand':
                 if self.state.posture == "sitting":
                     sit_2_stand(self.my_dog)
                 else:
-                    self.my_dog.do_action('stand')
+                    stand_up(self.my_dog)
                 self.state.posture = "standing"
                 await self.reset_head()
             elif action == 'sit':
-                self.my_dog.do_action('sit')
+                sit_down(self.my_dog)
                 self.state.posture = "sitting"
                 await self.reset_head()
             elif action == 'walk_left':
                 if self.state.posture == "sitting":
                     sit_2_stand(self.my_dog)
-                self.my_dog.do_action('turn_left', step_count=5, speed=100)
+                turn_left(self.my_dog, step_count=5, speed=100)
                 self.state.posture = "standing"
                 await self.reset_head()
             elif action == 'walk_right':
                 if self.state.posture == "sitting":
                     sit_2_stand(self.my_dog)
-                self.my_dog.do_action('turn_right', step_count=5, speed=100)
+                turn_right(self.my_dog, step_count=5, speed=100)
                 self.state.posture = "standing"
                 await self.reset_head()
             elif action == 'tilt_head_left':
-                self.my_dog.do_action('tilting_head_left')
+                tilt_head_left(self.my_dog)
             elif action == 'tilt_head_right':
-                self.my_dog.do_action('tilting_head_right')
+                tilt_head_right(self.my_dog)
             elif action == 'doze_off':
-                self.my_dog.do_action('doze_off', speed=100)
+                doze_off(self.my_dog, speed=100)
                 self.state.posture = "standing"
                 await self.reset_head()
             else:

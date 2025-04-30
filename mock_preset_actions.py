@@ -157,6 +157,54 @@ def stretch(my_dog):
     print("[Mock Action] stretch called")
     pass
 
+def wag_tail(my_dog, step_count=5, speed=100):
+    print(f"[Mock Action] wag_tail called with step_count={step_count}, speed={speed}")
+    pass
+
+def head_up_down(my_dog):
+    print("[Mock Action] head_up_down called")
+    pass
+
+def tilt_head_left(my_dog):
+    print("[Mock Action] tilt_head_left called")
+    pass
+
+def tilt_head_right(my_dog):
+    print("[Mock Action] tilt_head_right called")
+    pass
+
+def walk_forward(my_dog, step_count=5, speed=100):
+    print(f"[Mock Action] walk_forward called with step_count={step_count}, speed={speed}")
+    pass
+
+def walk_backward(my_dog, step_count=5, speed=100):
+    print(f"[Mock Action] walk_backward called with step_count={step_count}, speed={speed}")
+    pass
+
+def lie_down(my_dog):
+    print("[Mock Action] lie_down called")
+    pass
+
+def stand_up(my_dog, speed=80):
+    print(f"[Mock Action] stand_up called with speed={speed}")
+    pass
+
+def sit_down(my_dog, speed=80):
+    print(f"[Mock Action] sit_down called with speed={speed}")
+    pass
+
+def turn_left(my_dog, step_count=5, speed=100):
+    print(f"[Mock Action] turn_left called with step_count={step_count}, speed={speed}")
+    pass
+
+def turn_right(my_dog, step_count=5, speed=100):
+    print(f"[Mock Action] turn_right called with step_count={step_count}, speed={speed}")
+    pass
+
+def doze_off(my_dog, speed=100):
+    print(f"[Mock Action] doze_off called with speed={speed}")
+    pass
+
 # Add any other functions from preset_actions.py here as no-ops
 
 if __name__ == "__main__":
