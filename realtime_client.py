@@ -413,7 +413,6 @@ Only use 'switch_persona' or 'create_new_persona' when explicitly asked to do so
             }
         }
         await self.send("session.update", session_config)
-        await self.send_awareness()
 
     async def reconnect(self, persona, persona_object=None):
         """
@@ -437,6 +436,7 @@ Only use 'switch_persona' or 'create_new_persona' when explicitly asked to do so
                     personas.append(persona_object)
 
             await self.update_session(persona)
+            await self.send_awareness()
         except Exception as e:
             print(f"[RealtimeClient] Error in reconnect: {e}")
 

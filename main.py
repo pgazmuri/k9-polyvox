@@ -154,6 +154,7 @@ async def main():
         await action_manager.initialize_posture()
 
         await create_session_task
+        await client.send_awareness()
 
         # 5. Start background task and store the handle
         detect_status_task = asyncio.create_task(action_manager.detect_status(audio_manager, client))
