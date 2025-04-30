@@ -72,9 +72,10 @@ class ActionManager:
     async def initialize_posture(self):
         """Sets an initial posture after power up."""
         print("[ActionManager] Initializing posture...")
-        asyncio.create_task(self.power_up_sequence())
+        task = asyncio.create_task(self.power_up_sequence())
         music = speak(self.my_dog, "powerup")
         await self.perform_action('sit,look_forward')
+        await task  # Wait for the power-up sequence to finish
         music.music_stop()
         self.lightbar_breath()
     

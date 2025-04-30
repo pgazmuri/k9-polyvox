@@ -148,9 +148,12 @@ async def main():
         audio_manager.start_streams()
 
         # 2. Update session with a default or chosen persona
-        await client.update_session("Vektor Pulsecheck")
+        create_session_task =asyncio.create_task(client.update_session("Vektor Pulsecheck"))
 
+        # While session is being created, initialize the action manager
         await action_manager.initialize_posture()
+
+        await create_session_task
 
         # 5. Start background task and store the handle
         detect_status_task = asyncio.create_task(action_manager.detect_status(audio_manager, client))
