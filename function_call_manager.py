@@ -49,9 +49,12 @@ class FunctionCallManager:
                     # Schedule a restart of the current process after 3 seconds
                     python_executable = sys.executable
                     script_path = sys.argv[0]
-                    os.system(f"(sleep 3; sudo kill -9 {os.getpid()}) &")
-                    os.system(f"(sleep 5; {python_executable} {script_path}) &")
-
+                    # os.system(f"(sleep 3; sudo kill -9 {os.getpid()}) &")
+                    # os.system(f"(sleep 5; {python_executable} {script_path}) &")
+                    
+                    #try replacing the process with a new one
+                    os.execv(python_executable, [python_executable] + sys.argv)
+                    
                     #this seems to seng a signal to the process to quit, but it doesn't seem to work, leaves the camera in a bad state
                     # sys.exit()
                     # sys.exit()
