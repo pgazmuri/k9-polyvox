@@ -12,6 +12,7 @@ from action_manager import ActionManager
 from audio_manager import AudioManager
 from function_call_manager import FunctionCallManager
 from realtime_client import RealtimeClient
+import threading
 
 from keys import OPENAI_API_KEY  # Adjust to wherever your key is
 # Or define OPENAI_API_KEY = "..."
@@ -78,6 +79,10 @@ async def shutdown(signal_obj=None):
 
 
     print("Shutdown sequence complete.")
+
+    print("Threads at shutdown:")
+    for t in threading.enumerate():
+        print(f" - {t.name} (daemon={t.daemon})")
 
 async def main():
     # Make variables global so they can be accessed in shutdown handler
