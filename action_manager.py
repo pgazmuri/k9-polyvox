@@ -49,6 +49,7 @@ class ActionManager:
         self.reset_state_for_new_persona()
 
     def close(self):
+        self.my_dog.do_action('lie')
         self.my_dog.close()
 
     async def speak_async(self, filename):
