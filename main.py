@@ -130,5 +130,14 @@ async def main():
 if __name__ == "__main__":
     loop = asyncio.get_event_loop()
     for sig in (signal.SIGINT, signal.SIGTERM):
-        loop.add_signal_handler(sig, lambda s=sig: asyncio.create_task(shutdown(s)))
-    loop.run_until_complete(main())
+        # Stop the loop directly on signal
+        loop.add_signal_handler(sig, loop.stop)
+    try:
+        loop.run_until_complete(main())
+    finally:
+        # Ensure shutdown is called if loop was stopped by signal
+        # Check if shutdown has already run to avoid double execution
+        if not is_shutting_down:
+            # Run shutdown logic before the loop fully closes
+            loop.run_until_complete(shutdown())
+        loop.close()

@@ -3,15 +3,24 @@ import time
 import psutil
 import asyncio
 import random
+import os
 from state_manager import RobotDogState
 
 # External dependencies
 from pidog import Pidog
 from robot_hat import Ultrasonic
-from preset_actions import *
+
+# Conditionally import actions based on environment variable
+if os.environ.get("USE_MOCK_ACTIONS") == "1":
+    print("[ActionManager] Using MOCK preset actions.")
+    from mock_preset_actions import *
+else:
+    print("[ActionManager] Using REAL preset actions.")
+    from preset_actions import *
+
+from preset_actions import speak # Explicitly import speak as we still want to hear sounds
 from t2_vision import TakePictureAndReportBack, is_person_detected
 from persona_generator import generate_persona
-from preset_actions import speak
 
 from display_manager import display_message, display_status
 
