@@ -5,6 +5,13 @@ from luma.core.interface.serial import i2c
 from luma.oled.device import ssd1306
 from PIL import Image, ImageDraw, ImageFont
 
+
+device = None
+font = None
+
+# Define the height of the top (yellow) region
+YELLOW_REGION_HEIGHT = 16 # Common for 128x64 two-color OLEDs
+
 # --- Device Setup ---
 if os.environ.get("DISABLE_PIDOG_DISPLAY") == "1":
     print("Display is disabled. Skipping initialization.")
@@ -13,14 +20,9 @@ else:
         serial = i2c(port=1, address=0x3C)
         device = ssd1306(serial, width=128, height=64)
         font = ImageFont.load_default()
-        # Define the height of the top (yellow) region
-        YELLOW_REGION_HEIGHT = 16 # Common for 128x64 two-color OLEDs
     except Exception as e:
         print(f"Error initializing OLED display: {e}")
         print("Display functions will not work.")
-        device = None
-        font = None
-        YELLOW_REGION_HEIGHT = 0
 
 # --- Constants ---
 LINE_HEIGHT = 10 # Approx height for default font
