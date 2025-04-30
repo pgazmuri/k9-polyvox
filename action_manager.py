@@ -926,15 +926,16 @@ class ActionManager:
                         
                         #start a thread to take a photo
                         #call this in a new thread as a background task: TakePictureAndReportBack(question="Describe the current scene in front of you.")
-                        asyncio.create_task(self.perform_inline_photo(client))
+                        #50% of the time do this
+                        if random.random() < 0.5:
+                            # Perform inline photo action
+                            await self.perform_inline_photo(client)
+                            await client.force_response()
+                        else:
+                            await self.remind_of_default_goal(client)
 
-                        simple_status = self.get_simple_status()
-                        display_message("Status", simple_status)
-                        #await client.send_text_message(f"Checking in because you've been quiet'. Remember your default goal is: {default_motivation}. And your basic status is: {simple_status}\n This is your inner monologue, telling you to continue taking action!")
-                    
-                        await self.remind_of_default_goal(client)
                         self.last_reminder_time = current_time
-                        reminder_interval = random.randint(45, 60)  # Randomize next interval
+                        # reminder_interval = random.randint(45, 60)  # Randomize next interval
 
                 await asyncio.sleep(0.3)
                 is_change = False

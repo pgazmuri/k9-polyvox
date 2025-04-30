@@ -62,8 +62,7 @@ class RealtimeClient:
         self._outgoing_audio_task = asyncio.create_task(self.process_outgoing_audio())
         
     async def send_awareness(self):
-        #we expect the robot to repond with something, so we chould clear the audio outbound queue...
-        self.audio_manager.clear_audio_buffer()
+        
         print("[RealtimeClient] Sending awareness status...")
         await self.send("response.create", {
             "response": {
@@ -72,6 +71,16 @@ class RealtimeClient:
             }
         })
         self.action_manager.state.last_awareness_event_time = time.time()
+
+    async def force_response(self, instructions="respond to what is going on"):
+        
+        print("[RealtimeClient] Forcing a response...")
+        await self.send("response.create", {
+            "response": {
+                "instructions": instructions,
+                "tool_choice": "required"
+            }
+        })
 
     async def close(self):
         """Close the active websocket connection."""
@@ -118,8 +127,8 @@ class RealtimeClient:
         """Flush the message buffer and send all unique messages."""
         self.is_flushing = True
         try:
-            while self.message_buffer:
-                message = self.message_buffer.pop()
+            while not self.message_queue.empty():
+                message = self.message_queue.get()
                 print(f"[RealtimeClient] Sending buffered message: {message}")
                 asyncio.create_task(self._send_message(json.loads(message)))
                 await asyncio.sleep(0.01)  # Small delay to avoid overwhelming the server
@@ -144,7 +153,12 @@ class RealtimeClient:
                         # Audio chunk
                         audio_chunk = base64.b64decode(response['delta'])
                         self.audio_manager.queue_audio(audio_chunk)
-                        
+                    
+                    
+                    elif msg_type == 'response.created':
+                        #clear the audio buffer when a new response is created
+                        self.audio_manager.clear_audio_buffer()
+
                     elif msg_type == 'response.audio_transcript.delta':
                         # Partial transcript while GPT is speaking
                         self.isReceivingAudio = True
@@ -333,6 +347,7 @@ class RealtimeClient:
                 ]
             }
         })
+        
 
     async def update_session(self, persona="Vektor Pulsecheck"):
         """
