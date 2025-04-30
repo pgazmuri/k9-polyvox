@@ -196,7 +196,7 @@ class AudioManager:
                 self.action_manager.isTalkingMovement = True
                 self.loop.call_soon_threadsafe(asyncio.create_task, self.action_manager.start_talking())
 
-            while len(self._audio_buffer) < expected_size and not self.incoming_audio_queue.empty():
+            while len(self._audio_buffer) < expected_size and len(self.incoming_audio_queue) > 0:
                 audio_chunk = self.incoming_audio_queue.popleft()
                 self._audio_buffer.extend(audio_chunk)
 
