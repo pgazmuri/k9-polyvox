@@ -174,11 +174,10 @@ class RealtimeClient:
                         # GPT text output
                         print(f"Assistant: {response['delta']}")
                     
-                    elif msg_type == 'response.done':
+                    # elif msg_type == 'response.done':
                         # GPT text output
-                        print(f"Assistant: {response}")
-                        if response['response'].get('metadata').get('topic') == "self_motivation":
-                            self.send_text_message(response['response']['input'][0]['content'][0]['text'])
+                        #print(f"Assistant: {response}")
+                        
 
                     elif msg_type == 'response.function_call_arguments.done':
                         # GPT wants to call a function with these arguments
