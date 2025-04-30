@@ -49,10 +49,16 @@ class FunctionCallManager:
                     # Schedule a restart of the current process after 3 seconds
                     python_executable = sys.executable
                     script_path = sys.argv[0]
-                    os.system(f"(sleep 3; {python_executable} {script_path}) &")
+                    os.system(f"(sleep 3; sudo kill -9 {os.getpid()}) &")
+                    os.system(f"(sleep 5; {python_executable} {script_path}) &")
+
+                    
+                    sys.exit()
+                    sys.exit()
+                    sys.exit()
 
                     # Kill the current process
-                    os.kill(os.getpid(), 9)
+                    # os.kill(os.getpid(), 9)
                 except Exception as e:
                     print(f"[FunctionCallManager] Error during shutdown: {e}")
 
