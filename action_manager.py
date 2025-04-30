@@ -5,6 +5,7 @@ import asyncio
 import random
 import os
 from state_manager import RobotDogState
+from robot_hat import utils
 
 # External dependencies
 from pidog import Pidog
