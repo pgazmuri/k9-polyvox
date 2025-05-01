@@ -926,7 +926,7 @@ class ActionManager:
                         #start a thread to take a photo
                         #call this in a new thread as a background task: TakePictureAndReportBack(question="Describe the current scene in front of you.")
                         #50% of the time do this
-                        if random.random() < 0.5:
+                        if random.random() < 0.3:
                             # Perform inline photo action
                             await self.perform_inline_photo(client)
                             await client.force_response()

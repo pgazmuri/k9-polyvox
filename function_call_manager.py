@@ -95,6 +95,7 @@ class FunctionCallManager:
             elif func_name == 'set_goal':
                 arguments = json.loads(function_call['arguments'])
                 self.action_manager.state.goal = arguments.get("goal", "You are unsure of your goal. Ask a question or make a statement in keeping with your persona and the current state.")
+                self.client.persona["default_motivation"] = self.action_manager.state.goal
                 print(f"[FunctionCallManager] Goal set to: {self.action_manager.state.goal}")
                 result = "success"
                 return result
