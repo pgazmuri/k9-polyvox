@@ -257,6 +257,10 @@ class RealtimeClient:
                     # Try to get an item
                     resampled_bytes = self.audio_manager.dequeue_audio()
                     
+                    if resampled_bytes is None:
+                        # No data available, just continue the loop
+                        await asyncio.sleep(0.01)
+                        continue
                     # Audio is already resampled in AudioManager, so we just need to encode it
                     # Base64 encode the audio
                     chunk_base64 = await asyncio.to_thread(
@@ -274,7 +278,7 @@ class RealtimeClient:
                     pass
                     
                 # Yield control back to the event loop
-                await asyncio.sleep(0)
+                # await asyncio.sleep(0)
             except Exception as e:
                 print(f"[RealtimeClient] Error in process_outgoing_audio: {e}")
                 await asyncio.sleep(1)  # Wait before retrying after an error
