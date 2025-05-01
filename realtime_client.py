@@ -254,11 +254,8 @@ class RealtimeClient:
             try:
                 # Use await with a timeout to avoid blocking indefinitely
                 try:
-                    # Try to get an item with a short timeout
-                    resampled_bytes = await asyncio.wait_for(
-                        self.audio_manager.dequeue_audio(), 
-                        timeout=0.01
-                    )
+                    # Try to get an item
+                    resampled_bytes = self.audio_manager.dequeue_audio()
                     
                     # Audio is already resampled in AudioManager, so we just need to encode it
                     # Base64 encode the audio
