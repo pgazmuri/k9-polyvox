@@ -130,7 +130,7 @@ class RealtimeClient:
             while not self.message_queue.empty():
                 message = self.message_queue.get()
                 print(f"[RealtimeClient] Sending buffered message: {message}")
-                asyncio.create_task(self._send_message(message))
+                asyncio.create_task(self._send_message(json.loads(message)))
                 await asyncio.sleep(0.01)  # Small delay to avoid overwhelming the server
         except Exception as e:
             print(f"[RealtimeClient] Error flushing buffer: {e}")
@@ -254,13 +254,12 @@ class RealtimeClient:
             try:
                 # Use await with a timeout to avoid blocking indefinitely
                 try:
-                    # Try to get an item
-                    resampled_bytes = self.audio_manager.dequeue_audio()
+                    # Try to get an item with a short timeout
+                    resampled_bytes = await asyncio.wait_for(
+                        self.audio_manager.outgoing_data_queue.get(), 
+                        timeout=0.01
+                    )
                     
-                    if resampled_bytes is None:
-                        # No data available, just continue the loop
-                        await asyncio.sleep(0.001)
-                        continue
                     # Audio is already resampled in AudioManager, so we just need to encode it
                     # Base64 encode the audio
                     chunk_base64 = await asyncio.to_thread(
@@ -270,16 +269,18 @@ class RealtimeClient:
                     # Send the chunk to the server
                     await self.send("input_audio_buffer.append", {"audio": chunk_base64})
                     
+                    # Optional: Indicate task completion
+                    self.audio_manager.outgoing_data_queue.task_done()
+                    
                     # Optional: Save microphone audio for debugging
                     # self.save_microphone_audio(resampled_bytes)
                     
-                    await asyncio.sleep(0.001)
                 except asyncio.TimeoutError:
                     # No data available, just continue the loop
                     pass
                     
                 # Yield control back to the event loop
-                # await asyncio.sleep(0)
+                await asyncio.sleep(0)
             except Exception as e:
                 print(f"[RealtimeClient] Error in process_outgoing_audio: {e}")
                 await asyncio.sleep(1)  # Wait before retrying after an error

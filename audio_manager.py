@@ -7,7 +7,6 @@ from queue import Queue
 import time
 import traceback
 import wave
-from collections import deque
 
 from realtime_client import RealtimeClient
 
@@ -29,8 +28,8 @@ class AudioManager:
         self.p = pyaudio.PyAudio()
         self.input_stream = None
         self.output_stream = None
-        self.outgoing_data_queue = deque(maxlen=100)  # Limit queue size
-        self.incoming_audio_queue = deque(maxlen=100)  # For audio playback
+        self.outgoing_data_queue = asyncio.Queue(maxsize=100)  # Limit queue size
+        self.incoming_audio_queue = asyncio.Queue(maxsize=100)  # For audio playback
         self.dropped_frames = 0
         self.is_shutting_down = False  # Shutdown flag
         self._playback_task = None  # To manage the playback task
@@ -47,11 +46,11 @@ class AudioManager:
         """Clears the outgoing audio data queue."""
         print("[AudioManager] Clearing outgoing audio buffer...")
         dropped_count = 0
-        while len(self.outgoing_data_queue) > 0:
+        while not self.outgoing_data_queue.empty():
             try:
-                self.outgoing_data_queue.popleft()
+                self.outgoing_data_queue.get_nowait()
                 dropped_count += 1
-            except IndexError:
+            except asyncio.QueueEmpty:
                 break
         print(f"[AudioManager] Cleared {dropped_count} items from outgoing queue.")
 
@@ -72,30 +71,10 @@ class AudioManager:
         return self.latest_volume > 30
 
     def queue_audio(self, audio_bytes: bytes):
-        """Add incoming audio to the queue for playback with error handling."""
-        try:
-            for i in range(0, len(audio_bytes), self.chunk_size):
-                audio_chunk = audio_bytes[i:i+self.chunk_size]  # Split into chunks
-                self.incoming_audio_queue.append(audio_chunk)
-        except Exception as e:
-            print(f"[AudioManager] Error while queuing audio: {e}")
-            traceback.print_exc()
-
-    def dequeue_audio(self):
-        #dequeu from outgoing data queue
-        """Dequeue audio data for playback."""
-        try:
-            if not self.outgoing_data_queue:
-                return None
-            audio_chunk = self.outgoing_data_queue.popleft()
-            return audio_chunk
-        except IndexError:
-            print("[AudioManager] Outgoing data queue is empty.")
-            return None
-        except Exception as e:
-            print(f"[AudioManager] Error while dequeuing audio: {e}")
-            traceback.print_exc()
-            return None
+        """Add incoming audio to the queue for playback."""
+        for i in range(0, len(audio_bytes), self.chunk_size):
+            audio_chunk = audio_bytes[i:i+self.chunk_size]  # Split into chunks
+            self.incoming_audio_queue.put_nowait(audio_chunk)
 
     def stop_streams(self):
         """Stop both input and output streams."""
@@ -111,8 +90,8 @@ class AudioManager:
         self.dropped_frames = 0
         self.latest_volume = 0
         self.action_manager.isTalkingMovement = False
-        self.outgoing_data_queue.clear()
-        self.incoming_audio_queue.clear()
+        self.incoming_audio_queue = asyncio.Queue(maxsize=100)
+        self.outgoing_data_queue = asyncio.Queue(maxsize=100)
         print("[AudioManager] Queues cleared.")
 
     def start_streams(self):
@@ -176,7 +155,7 @@ class AudioManager:
             return
 
         try:
-            self.outgoing_data_queue.append(data)
+            await asyncio.wait_for(self.outgoing_data_queue.put(data), timeout=0.01)
         except asyncio.TimeoutError:
             self.dropped_frames += 1
             if self.dropped_frames % 100 == 0:
@@ -192,12 +171,12 @@ class AudioManager:
             if not hasattr(self, "_audio_buffer"):
                 self._audio_buffer = bytearray()
 
-            if len(self.incoming_audio_queue) > 0 and not self.action_manager.isTalkingMovement:
+            if not self.incoming_audio_queue.empty() and not self.action_manager.isTalkingMovement:
                 self.action_manager.isTalkingMovement = True
                 self.loop.call_soon_threadsafe(asyncio.create_task, self.action_manager.start_talking())
 
-            while len(self._audio_buffer) < expected_size and len(self.incoming_audio_queue) > 0:
-                audio_chunk = self.incoming_audio_queue.popleft()
+            while len(self._audio_buffer) < expected_size and not self.incoming_audio_queue.empty():
+                audio_chunk = self.incoming_audio_queue.get_nowait()
                 self._audio_buffer.extend(audio_chunk)
 
             if len(self._audio_buffer) >= expected_size:
