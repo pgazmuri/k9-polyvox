@@ -28,8 +28,8 @@ class AudioManager:
         self.p = pyaudio.PyAudio()
         self.input_stream = None
         self.output_stream = None
-        self.outgoing_data_queue = asyncio.Queue(maxsize=100)  # Limit queue size
-        self.incoming_audio_queue = asyncio.Queue(maxsize=100)  # For audio playback
+        self.outgoing_data_queue = asyncio.Queue(maxsize=1000)  # Limit queue size
+        self.incoming_audio_queue = asyncio.Queue(maxsize=1000)  # For audio playback
         self.dropped_frames = 0
         self.is_shutting_down = False  # Shutdown flag
         self._playback_task = None  # To manage the playback task
