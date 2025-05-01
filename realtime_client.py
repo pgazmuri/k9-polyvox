@@ -158,7 +158,7 @@ class RealtimeClient:
                     
                     elif msg_type == 'response.output_item.added':
                         #clear the audio buffer when a new response is created
-                        if(response['output_index'] == 0):
+                        if(response['output_index'] == 0 and response['item']['type'] == 'message'):
                             print(f"[RealtimeClient] New response created {response}, clearing audio buffer...")
                             self.audio_manager.clear_audio_buffer()
                         

@@ -45,14 +45,19 @@ class AudioManager:
     def clear_audio_buffer(self):
         """Clears the outgoing audio data queue."""
         print("[AudioManager] Clearing outgoing audio buffer...")
-        dropped_count = 0
-        while not self.outgoing_data_queue.empty():
-            try:
-                self.outgoing_data_queue.get_nowait()
-                dropped_count += 1
-            except asyncio.QueueEmpty:
-                break
-        print(f"[AudioManager] Cleared {dropped_count} items from outgoing queue.")
+        
+        # self.output_stream.close()  # Close the output stream
+        # self.output_stream = self.p.open(
+        #         format=pyaudio.paInt16,
+        #         channels=1,
+        #         rate=self.output_rate,
+        #         output=True,
+        #         # output_device_index=self.output_device_index,
+        #         frames_per_buffer=self.chunk_size,
+        #         stream_callback=self.audio_output_callback
+        #     )
+        self.incoming_audio_queue = asyncio.Queue()
+        self._audio_buffer = bytearray()
 
 
     def _find_device_index(self, device_name):
