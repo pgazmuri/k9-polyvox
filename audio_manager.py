@@ -19,7 +19,7 @@ class AudioManager:
     - Buffer incoming audio from GPT and play it out smoothly in near-realtime.
     """
 
-    def __init__(self, action_manager, loop, input_rate=48000, output_rate=24000, chunk_size=4096):
+    def __init__(self, action_manager, loop, input_rate=48000, output_rate=24000, chunk_size=8192):
         self.action_manager = action_manager
         self.loop = loop  # Store the loop reference
         self.input_rate = input_rate
