@@ -259,7 +259,7 @@ class RealtimeClient:
                     
                     if resampled_bytes is None:
                         # No data available, just continue the loop
-                        await asyncio.sleep(0.01)
+                        await asyncio.sleep(0.001)
                         continue
                     # Audio is already resampled in AudioManager, so we just need to encode it
                     # Base64 encode the audio
@@ -273,6 +273,7 @@ class RealtimeClient:
                     # Optional: Save microphone audio for debugging
                     # self.save_microphone_audio(resampled_bytes)
                     
+                    await asyncio.sleep(0.001)
                 except asyncio.TimeoutError:
                     # No data available, just continue the loop
                     pass
