@@ -44,6 +44,7 @@ class RealtimeClient:
 
         # Let's you track whether GPT is currently speaking
         self.isReceivingAudio = False
+        self.isDetectingUserSpeech = False
         self.message_queue = Queue()  # Buffer to store unique messages
         self.is_flushing = False  # To prevent overlapping flush tasks
 
@@ -188,6 +189,14 @@ class RealtimeClient:
                     elif msg_type =='input_audio_buffer.speech_started':
                         # GPT has started listening
                         print("[RealtimeClient] GPT noticed someone is talking, and GPT is listening...")
+                        self.isDetectingUserSpeech = True
+                        #clear audio buffer
+                        self.audio_manager.clear_audio_buffer()
+
+                    elif msg_type =='input_audio_buffer.speech_stopped':
+                        # GPT has started listening
+                        print("[RealtimeClient] GPT noticed someone stopped talking...")
+                        self.isDetectingUserSpeech = False
                         #clear audio buffer
                         self.audio_manager.clear_audio_buffer()
                     
