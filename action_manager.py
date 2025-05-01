@@ -882,7 +882,7 @@ class ActionManager:
                 new_goal = ""
 
                 if self.isTalkingMovement or self.isTakingAction or self.isPlayingSound or client.isDetectingUserSpeech or client.isReceivingAudio:
-                    elapsed_since_reminder = current_time # Reset reminder timer when talking or taking action
+                    self.last_reminder_time = current_time # Reset reminder timer when talking or taking action
                     is_change = False
 
                 if is_change and (not self.isTalkingMovement):
