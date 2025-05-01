@@ -266,9 +266,6 @@ class RealtimeClient:
                     # Send the chunk to the server
                     await self.send("input_audio_buffer.append", {"audio": chunk_base64})
                     
-                    # Optional: Indicate task completion
-                    self.audio_manager.outgoing_data_queue.task_done()
-                    
                     # Optional: Save microphone audio for debugging
                     # self.save_microphone_audio(resampled_bytes)
                     
