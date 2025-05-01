@@ -72,9 +72,15 @@ class AudioManager:
 
     def queue_audio(self, audio_bytes: bytes):
         """Add incoming audio to the queue for playback."""
-        for i in range(0, len(audio_bytes), self.chunk_size):
-            audio_chunk = audio_bytes[i:i+self.chunk_size]  # Split into chunks
-            self.incoming_audio_queue.put_nowait(audio_chunk)
+        try:
+            for i in range(0, len(audio_bytes), self.chunk_size):
+                audio_chunk = audio_bytes[i:i+self.chunk_size]  # Split into chunks
+                self.incoming_audio_queue.put_nowait(audio_chunk)
+        except asyncio.QueueFull:
+            print("[AudioManager] Incoming audio queue is full. Dropping audio chunk.")
+        except Exception as e:
+            print(f"[AudioManager] Error in queue_audio: {e}")
+            traceback.print_exc()
 
     def stop_streams(self):
         """Stop both input and output streams."""

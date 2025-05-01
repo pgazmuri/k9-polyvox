@@ -201,6 +201,9 @@ class RealtimeClient:
                     #     print(f"[RealtimeClient] Message content: {response}")
 
                 except Exception as e:
+                    if response.get('delta'):
+                        # Handle audio chunk decoding errors separately
+                        response.set('delta', '[REDACTED FOR VERBOSITY]')
                     print(f"[RealtimeClient] Error parsing response from Realtime API: {e} | Message: {response}")
         except asyncio.CancelledError:
             print("[RealtimeClient] Receive loop cancelled.")
