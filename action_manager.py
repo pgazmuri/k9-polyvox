@@ -472,6 +472,8 @@ class ActionManager:
                 self.state.posture = "sitting"
                 await self.reset_head()
             elif action == 'push_up':
+                if self.state.posture == "sitting":
+                    sit_2_stand(self.my_dog)
                 push_up(self.my_dog)
                 self.state.posture = "standing"
                 await self.reset_head()
@@ -896,7 +898,7 @@ class ActionManager:
                         #     new_status_update = "You are no longer being petted."
                     if sound_changed:
                         if (audio_manager.latest_volume > 30):
-                            new_status_update = f"Sound (is someone talking?) came from direction: {self.state.last_sound_direction}. You don't need to react to this if someone is talking..."
+                            new_status_update = f"Sound (is someone talking?) came from direction: {self.state.last_sound_direction}. If someone is talking you may want to look in that direction before responding."
                     if face_changed:
                         if (current_time - self.state.face_detected_at) < 10:
                             new_goal = f"A face is detected! You are looking {self.state.head_position}. You must say and do something in reaction to this."
@@ -926,12 +928,14 @@ class ActionManager:
                         #start a thread to take a photo
                         #call this in a new thread as a background task: TakePictureAndReportBack(question="Describe the current scene in front of you.")
                         #50% of the time do this
-                        if random.random() < 0.3:
-                            # Perform inline photo action
-                            await self.perform_inline_photo(client)
-                            await client.force_response()
-                        else:
-                            await self.remind_of_default_goal(client)
+                        # if random.random() < 0.3:
+                        #     # Perform inline photo action
+                            
+                        #     await client.force_response()
+                        # else:
+                        await self.perform_inline_photo(client)
+
+                        await self.remind_of_default_goal(client)
 
                         self.last_reminder_time = current_time
                         # reminder_interval = random.randint(45, 60)  # Randomize next interval
@@ -946,9 +950,9 @@ class ActionManager:
         #log persona to console
         print(f"[ActionManager] Performing inline photo with persona: {client.persona}")
         self.vision_description = await TakePictureAndReportBack(
-                            client.persona['image_prompt'] + f" Describe the current scene in front of you."
+                            f"Describe the current scene."
                         )
-        client.send_text_message(f"In the direction your head is facing ({self.state.head_position}), you can see: {self.vision_description}")
+        client.send_text_message(f"In the direction your head is facing ({self.state.head_position}), you can see: {self.vision_description}. You may use this information in future responses, or when asked about your surroundings. You don't need to look_and_see right now.")
 
     async def remind_of_default_goal(self, client):
         """
