@@ -352,10 +352,10 @@ class RealtimeClient:
         await self.send("conversation.item.create", {
             "item": {
                 "type": "message",
-                "role": "user",
+                "role": "assistant",
                 "content": [
                     {
-                        "type": "input_text",
+                        "type": "text",
                         "text": text,
                     }
                 ]
