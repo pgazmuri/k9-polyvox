@@ -1,6 +1,6 @@
-# PiDog PolyVox
+# k9-polyvox
 
-PiDog PolyVox is an advanced, persona-driven robot dog project for the [SunFounder PiDog](https://www.sunfounder.com/products/pidog) platform. It features real-time speech, persona switching, robotic actions, and integration with OpenAI's GPT models. The project is designed for Raspberry Pi and leverages the official PiDog hardware and software stack.
+k9-polyvox is a persona-driven robot dog project for the [SunFounder PiDog](https://www.sunfounder.com/products/pidog) platform. It features real-time speech, persona switching, robotic actions, and integration with OpenAI's GPT models for vision interpretation and persona creation. The project is designed for Raspberry Pi and leverages the official PiDog hardware and software stack.
 
 ## Features
 
