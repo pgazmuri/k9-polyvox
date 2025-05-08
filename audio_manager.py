@@ -146,6 +146,11 @@ class AudioManager:
         audio_data = np.frombuffer(in_data, dtype=np.int16)
         self.latest_volume = np.sqrt(np.mean(audio_data**2))
 
+
+        #if pidog is talking, and the speaker isn't disabled, we need to ignore incoming audio, as it's likely to be feedback
+        if self.action_manager.isTalkingMovement and not self.action_manager.PIDOG_SPEAKER_DISABLED:
+            return (None, pyaudio.paContinue)
+        
         try:
             resampled_data = resampy.resample(audio_data, self.input_rate, self.output_rate)
             resampled_bytes = resampled_data.astype(np.int16).tobytes()

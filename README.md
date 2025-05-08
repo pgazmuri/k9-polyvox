@@ -23,7 +23,7 @@ Since my PiDog speaker failed, I switched to an external bluetooth speaker and s
 
 There is some complexity around bluetooth devices and profiles, so I recommend getting default speaker and microphone working and tested before trying to run polyvox.
 
-k9-polyvox is intended to run using default pipewire sources and sinks. It expects input and output audio at 44khz currently, so the "headset" bluetooth profile will not work currently.
+k9-polyvox is intended to run using default pipewire sources and sinks. It expects audio input at 48khz and outputs audio at 24khz currently, so the "headset" bluetooth profile will not work until that is updated to handle 24khz input.
 
 To setup bluetooth devices, [Use Bluetoothctl](https://www.makeuseof.com/manage-bluetooth-linux-with-bluetoothctl/).
 
@@ -103,6 +103,10 @@ OPENAI_API_KEY = "sk-..."
   ```sh
   export DISABLE_PIDOG_SPEAKER=1
   ```
+  *Important:* If you leave the speaker enabled, microphone input will be ignored while the dog is speaking. This is to avoid feedback where the dog will otherwise interrupt itself.  If you disable the speaker, you will be able to "interrupt" the dog mid-speech.
+
+  It's recommended that you use a wireless usb mic with a mute button, so you can unmute to give a command or interrupt the dog without feedback cuasing issues.
+
 - **Disable OLED Display:** If you don't have the SSD1306 OLED display, set:
   ```sh
   export DISABLE_PIDOG_DISPLAY=1

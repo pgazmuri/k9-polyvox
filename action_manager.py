@@ -34,6 +34,7 @@ class ActionManager:
         #if env DISABLE_PIDOG_SPEAKER is set, use the patch
         if os.environ.get("DISABLE_PIDOG_SPEAKER") == "1":
             print("DISABLE_PIDOG_SPEAKER is set, using patch for speaker.")
+            self.PIDOG_SPEAKER_DISABLED = True
             from unittest.mock import patch
             from unittest.mock import MagicMock
             # Mock the enable_speaker function to do nothing
@@ -41,6 +42,7 @@ class ActionManager:
             with patch("robot_hat.music.enable_speaker", new=noop):
                 self.my_dog = Pidog()
         else:
+            self.PIDOG_SPEAKER_DISABLED = False
             self.my_dog = Pidog()
         print("PiDog Initiated...")
         
