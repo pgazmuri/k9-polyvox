@@ -17,6 +17,52 @@ k9-polyvox is a persona-driven robot dog project for the [SunFounder PiDog](http
 - Raspberry Pi 4 (recommended) with Raspberry Pi OS
 - (Optional/Experimental) SSD1306 128x64 OLED display (I2C, for status/messages)
 
+## Audio Setup
+
+Since my PiDog speaker failed, I switched to an external bluetooth speaker and separate wireless USB microphone. I moved to running pipewire in user mode, so sudo is no longer required for audio output.
+
+There is some complexity around bluetooth devices and profiles, so I recommend getting default speaker and microphone working and tested before trying to run polyvox.
+
+k9-polyvox is intended to run using default pipewire sources and sinks. It expects input and output audio at 44khz currently, so the "headset" bluetooth profile will not work currently.
+
+To setup bluetooth devices, [Use Bluetoothctl](https://www.makeuseof.com/manage-bluetooth-linux-with-bluetoothctl/).
+
+Be sure to set the profile to a2dp using "pactl set-card-profile". This profile is for high quality audio output, but doesn't support microphone input (hence my use of a separate USB mic). 
+The headset profile is not currently supported as it expects a different sample rate, though I intend to add support for this.
+
+You can install pipewire and set default sources and sinks using the cli:
+
+```sh
+# Install PipeWire (on Debian/Ubuntu systems)
+sudo apt install pipewire pipewire-audio-client-libraries pipewire-pulse
+
+# List available audio output devices (sinks)
+pactl list short sinks
+
+# List available audio input devices (sources)
+pactl list short sources
+
+# Get detailed information about a specific sink
+pactl list sinks | less
+
+# Get detailed information about a specific source
+pactl list sources | less
+
+# Set default audio output device (sink)
+pactl set-default-sink sink_name
+# Example: pactl set-default-sink bluez_sink.XX_XX_XX_XX_XX_XX.a2dp_sink
+
+# Set default audio input device (source)
+pactl set-default-source source_name
+# Example: pactl set-default-source alsa_input.usb-Generic_USB_Audio_200901010001-00.mono-fallback
+
+# Test audio output
+paplay /usr/share/sounds/alsa/Front_Center.wav
+
+# Test audio input (record for 5 seconds and play back)
+parecord --channels=1 --format=s16le --rate=48000 test.wav --duration=5 && paplay test.wav
+```
+
 ## Software Setup
 
 ### 1. Install PiDog Software (SunFounder Official)
@@ -82,7 +128,11 @@ Start the main program:
 python main.py
 ```
 
-The robot will boot, connect to OpenAI, and begin interacting. Use Ctrl+C to stop.
+The robot will boot, connect to OpenAI, and begin interacting. Use Ctrl+C to stop, or ask "Vector" to shut down.
+
+## Interacting with the dog
+
+See the [user guide](USING_K9-POLYVOX.md) to learn how to interact with k9-polyvox.
 
 ## Installing as a Service
 
