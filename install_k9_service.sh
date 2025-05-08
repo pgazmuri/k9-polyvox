@@ -42,6 +42,8 @@ ExecStart=/usr/bin/python3 $PY_SCRIPT
 Restart=on-failure
 WorkingDirectory=$WORKING_DIR
 Environment=PYTHONUNBUFFERED=1
+Environment=DISABLE_PIDOG_SPEAKER=0
+Environment=DISABLE_PIDOG_DISPLAY=1
 StandardOutput=journal
 StandardError=journal
 
