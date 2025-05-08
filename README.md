@@ -15,33 +15,29 @@ k9-polyvox is a persona-driven robot dog project for the [SunFounder PiDog](http
 
 - [SunFounder PiDog](https://www.sunfounder.com/products/pidog) kit (with all servos, sensors, and lightbar)
 - Raspberry Pi 4 (recommended) with Raspberry Pi OS
-- (Optional) SSD1306 128x64 OLED display (I2C, for status/messages)
+- (Optional/Experimental) SSD1306 128x64 OLED display (I2C, for status/messages)
 
 ## Software Setup
 
 ### 1. Install PiDog Software (SunFounder Official)
 
-Follow the official [SunFounder PiDog software setup guide](https://docs.sunfounder.com/projects/pidog/en/latest/software/installation.html):
+Follow the official [SunFounder PiDog software setup guide](https://pidog.rtfd.io/):
 
-```sh
-# Clone the official PiDog repository
-git clone https://github.com/sunfounder/pidog.git
-cd pidog
-sudo pip3 install .
-```
+Be sure to perform the steps to [Install All the Modules](https://docs.sunfounder.com/projects/pidog/en/latest/python/python_start/install_all_modules.html);
 
 Make sure you can run the PiDog demo scripts and that your hardware is working.
 
 ### 2. Clone This Repository
 
 ```sh
+cd ~/
 git clone https://github.com/pgazmuri/k9-polyvox
 cd k9-polyvox
 ```
 
 ### 3. Install Python Dependencies
 
-It's recommended to use Python 3.7+.
+It's recommended to use Python 3+
 
 ```sh
 sudo pip install -r requirements.txt --break-system-packages
@@ -49,7 +45,7 @@ sudo pip install -r requirements.txt --break-system-packages
 
 ### 4. Configure API Keys
 
-Create a `keys.py` file in the project root with your OpenAI API key:
+Edit the `keys.py` file in the project root with your OpenAI API key:
 
 ```python
 OPENAI_API_KEY = "sk-..."
@@ -57,7 +53,7 @@ OPENAI_API_KEY = "sk-..."
 
 ### 5. (Optional) Disable Audio or Display
 
-- **Disable PiDog Speaker:** If you don't have the PiDog speaker or want to skip audio output, set the following environment variable:
+- **Disable PiDog Speaker:** If your PiDog speaker is broken or you want to use a bluetooth speaker instead (recommended), set the following environment variable:
   ```sh
   export DISABLE_PIDOG_SPEAKER=1
   ```
@@ -70,7 +66,7 @@ OPENAI_API_KEY = "sk-..."
   ```sh
   export USE_MOCK_ACTIONS=1
   ```
-  This replaces real robot actions with mock implementations, allowing you to test the software without actual hardware movement.
+  This replaces real robot actions with mock implementations, allowing you to test the software without servo movement. This is useful when you want the dog to stay still, but also extends the lifetime of servos and reduces battery usage during development/testing.
 
 You can add these to your `.bashrc` or set them inline when running:
 
@@ -87,6 +83,69 @@ python main.py
 ```
 
 The robot will boot, connect to OpenAI, and begin interacting. Use Ctrl+C to stop.
+
+## Installing as a Service
+
+The project includes a script to install k9-polyvox as a user-level systemd service that starts automatically when you log in. Start by customizing the environment variables by editing the installer script:
+
+```sh
+nano ~/.config/systemd/user/k9_polyvox.service
+```
+
+Update settings as needed:
+
+```sh
+Environment=DISABLE_PIDOG_SPEAKER=0
+Environment=DISABLE_PIDOG_DISPLAY=1
+```
+
+Then run the script to install as a service with those variables:
+
+```sh
+bash install_k9_service.sh ~/k9-polyvox/main.py
+```
+
+### Service Features:
+
+- **User-level service**: Runs under your user account, not as root
+- **Automatic startup**: Service starts when you log in
+- **Pipewire compatible**: Designed to work with modern Pipewire audio system
+- **Preconfigured environment**: Sets these variables by default:
+  - `DISABLE_PIDOG_SPEAKER=0` (Uses PiDog's built-in speaker)
+  - `DISABLE_PIDOG_DISPLAY=1` (Disables OLED display by default)
+
+### Controlling the Service
+
+```sh
+# View real-time logs
+journalctl --user -u k9_polyvox -f
+
+# Stop the service
+systemctl --user stop k9_polyvox
+
+# Start the service
+systemctl --user start k9_polyvox
+
+# Disable automatic startup
+systemctl --user disable k9_polyvox
+```
+
+### Customizing Environment Variables
+
+To change the default environment variables after the service has been installed, edit the service file:
+
+```sh
+nano ~/.config/systemd/user/k9_polyvox.service
+```
+
+Modify the `Environment=` lines, then reload and restart:
+
+```sh
+systemctl --user daemon-reload
+systemctl --user restart k9_polyvox
+```
+
+
 
 ## Troubleshooting
 
