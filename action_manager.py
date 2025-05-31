@@ -513,31 +513,31 @@ class ActionManager:
                 think(self.my_dog)
             elif action == 'recall':
                 recall(self.my_dog)
-            elif action == 'look_down':
+            elif action == 'turn_head_down':
                 look_down(self.my_dog, pitch_comp=-30 if self.state.posture == "sitting" else 0)
                 self.state.head_position = "down"
-            elif action == 'look_up':
+            elif action == 'turn_head_up':
                 look_up(self.my_dog, pitch_comp=-30 if self.state.posture == "sitting" else 0)
                 self.state.head_position = "up"
-            elif action == 'look_down_left':
+            elif action == 'turn_head_down_left':
                 head_down_left(self.my_dog, pitch_comp=-30 if self.state.posture == "sitting" else 0)
                 self.state.head_position = "down left"
-            elif action == 'look_down_right':
+            elif action == 'turn_head_down_right':
                 head_down_right(self.my_dog, pitch_comp=-30 if self.state.posture == "sitting" else 0)
                 self.state.head_position = "down right"
-            elif action == 'look_up_left':
+            elif action == 'turn_head_up_left':
                 head_up_left(self.my_dog, pitch_comp=-30 if self.state.posture == "sitting" else 0)
                 self.state.head_position = "up left"
-            elif action == 'look_up_right':
+            elif action == 'turn_head_up_right':
                 head_up_right(self.my_dog, pitch_comp=-30 if self.state.posture == "sitting" else 0)
                 self.state.head_position = "up right"
-            elif action == 'look_forward':
+            elif action == 'turn_head_forward':
                 look_forward(self.my_dog, pitch_comp=-30 if self.state.posture == "sitting" else 0)
                 self.state.head_position = "forward"
-            elif action == 'look_left':
+            elif action == 'turn_head_left':
                 look_left(self.my_dog, pitch_comp=-30 if self.state.posture == "sitting" else 0)
                 self.state.head_position = "left"
-            elif action == 'look_right':
+            elif action == 'turn_head_right':
                 look_right(self.my_dog, pitch_comp=-30 if self.state.posture == "sitting" else 0)
                 self.state.head_position = "right"
             elif action == 'fluster':
@@ -777,33 +777,33 @@ class ActionManager:
 
     async def reset_head(self):
         if self.state.head_position == "forward":
-            await self.perform_action("look_forward")
+            await self.perform_action("turn_head_forward")
         elif self.state.head_position == "left":
-            await self.perform_action("look_left")
+            await self.perform_action("turn_head_left")
         elif self.state.head_position == "right":
-            await self.perform_action("look_right")
+            await self.perform_action("turn_head_right")
         elif self.state.head_position == "up":
-            await self.perform_action("look_up")
+            await self.perform_action("turn_head_up")
         elif self.state.head_position == "down":
-            await self.perform_action("look_down")
+            await self.perform_action("turn_head_down")
         elif self.state.head_position == "up left":
-            await self.perform_action("look_up_left")
+            await self.perform_action("turn_head_up_left")
         elif self.state.head_position == "up right":
-            await self.perform_action("look_up_right")
+            await self.perform_action("turn_head_up_right")
         elif self.state.head_position == "down left":
-            await self.perform_action("look_down_left")
+            await self.perform_action("turn_head_down_left")
         elif self.state.head_position == "down right":       
-            await self.perform_action("look_down_right")
+            await self.perform_action("turn_head_down_right")
         else:
-            await self.perform_action("look_forward")
+            await self.perform_action("turn_head_forward")
 
     def get_available_actions(self):
         """Returns the list of all available actions the robot dog can perform."""
         return [
             "wag_tail", "bark", "bark_harder", "pant", "howling", "stretch", "push_up",
             "scratch", "handshake", "high_five", "lick_hand", "shake_head", "relax_neck",
-            "nod", "think", "recall", "look_down", "look_up", "look_down_left", "look_down_right",
-            "look_up_left", "look_up_right", "look_forward", "look_left", "look_right", 
+            "nod", "think", "recall", "turn_head_down", "turn_head_up", "turn_head_down_left", "turn_head_down_right",
+            "turn_head_up_left", "turn_head_up_right", "turn_head_forward", "turn_head_left", "turn_head_right", 
             "fluster", "surprise", "alert", "attack_posture", "body_twisting", "feet_shake", 
             "sit_2_stand", "bored", "walk_forward", "walk_backward", "lie", "stand", "sit",
             "walk_left", "walk_right", "tilt_head_left", "tilt_head_right", "doze_off"
