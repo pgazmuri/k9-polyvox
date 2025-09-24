@@ -131,7 +131,8 @@ class RealtimeClient:
             while not self.message_queue.empty():
                 message = self.message_queue.get()
                 print(f"[RealtimeClient] Sending buffered message: {message}")
-                asyncio.create_task(self._send_message(json.loads(message)))
+                # message already a dict; previous code attempted json.loads causing errors & dropped messages
+                asyncio.create_task(self._send_message(message))
                 await asyncio.sleep(0.01)  # Small delay to avoid overwhelming the server
         except Exception as e:
             print(f"[RealtimeClient] Error flushing buffer: {e}")
@@ -151,7 +152,13 @@ class RealtimeClient:
                     msg_type = response['type']
                     
                     if msg_type == 'response.audio.delta' and response.get('delta'):
-                        # Audio chunk
+                        # Audio chunk (mark start sooner for reduced perceived latency)
+                        if not self.isReceivingAudio:
+                            self.isReceivingAudio = True
+                            # Latency instrumentation: time from last user audio chunk to first model audio
+                            if hasattr(self.audio_manager, 'last_user_audio_chunk_time'):
+                                gap_ms = (time.time() - self.audio_manager.last_user_audio_chunk_time) * 1000
+                                print(f"[LAT] user->first_model_audio: {gap_ms:.1f} ms")
                         audio_chunk = base64.b64decode(response['delta'])
                         self.audio_manager.queue_audio(audio_chunk)
                     
@@ -194,11 +201,10 @@ class RealtimeClient:
                         self.audio_manager.clear_audio_buffer()
 
                     elif msg_type =='input_audio_buffer.speech_stopped':
-                        # GPT has started listening
+                        # User finished speaking; do NOT clear incoming audio here.
+                        # Clearing now risks dropping early model audio chunks that race in right after VAD end.
                         print("[RealtimeClient] GPT noticed someone stopped talking...")
                         self.isDetectingUserSpeech = False
-                        #clear audio buffer
-                        self.audio_manager.clear_audio_buffer()
                     
                     elif msg_type == 'error':
                         print(f"[RealtimeClient] Error response: {response}")
@@ -314,7 +320,8 @@ class RealtimeClient:
 
             except Exception as e:
                 print(f"[RealtimeClient] Error in process_function_calls: {e}")
-            await asyncio.sleep(0.1)
+            # Poll faster to reduce tool call latency
+            await asyncio.sleep(0.02)
 
     async def send_function_call_result(self, function_call, result):
         """
@@ -361,6 +368,34 @@ class RealtimeClient:
                 ]
             }
         })
+
+    async def send_image_and_request_response(self, image_path: str):
+        """Send an input image (captured locally) to the conversation then request a model response.
+
+        This follows the new realtime API pattern:
+          1. conversation.item.create (message with content type 'input_image')
+          2. response.create (to have the model respond)
+        """
+        try:
+            with open(image_path, 'rb') as f:
+                img_bytes = f.read()
+            b64_image = base64.b64encode(img_bytes).decode('utf-8')
+            await self.send("conversation.item.create", {
+                "item": {
+                    "type": "message",
+                    "role": "user",
+                    "content": [
+                        {
+                            "type": "input_image",
+                            "image_url": f"data:image/jpeg;base64,{b64_image}"
+                        }
+                    ]
+                }
+            })
+            # Now request a response (no extra instructions so persona/instructions drive behavior)
+            await self.send("response.create", {"response": {}})
+        except Exception as e:
+            print(f"[RealtimeClient] Error sending image: {e}")
         
 
     async def update_session(self, persona="Vektor Pulsecheck"):
@@ -416,8 +451,14 @@ Perform robotic actions aggressively to bring the persona to life.
 • To speak while performing a robotic action, speak first, then perform the action. Foe example: Say `Hello There!` then perform_action `wag_tail,handshake`.
 • Use **`nod`** for yes / **`shake_head`** for no.
 
-## Action Cadence Rules  🌟
-1. **Every response must contain ≥ 2 robotic actions** unless silence is requested.  
+# VISION
+Use look_and_see to see whatever is in front of where your head is pointing.  To scan an area, turn head up left -> look_and_see -> turn head up forward -> look_and_see -> turn head up right -> look_and_see
+To patrol with vision, scan the area and walk in an appropriate direction, then scan the area and walk in an appropriate direction, etc... over and over until you are told to stop.
+When asked to roast the person in front of you, turn_head_up -> look_and_see, and then roast them ruthlessly (unless out of character for your persona).
+When asked to look left, right, up, down, or center, turn your head in that direction and then look_and_see.
+
+## Action Cadence Rules 
+1. When responding, always speak before performing actions and **Every response should contain at least one action** unless silence is requested.  
 2. Alternate *speech ↔ action* like a stage play:  
    - Say a line ➜ then call function perform_action ➜ Say a line ➜ then call function perform_action …  etc.
 3. When the user asks for a “show,” “workout,” “patrol,” etc., escalate to **8 perform_action bursts** interleaved with short lines of dialogue.  
@@ -427,7 +468,7 @@ Perform robotic actions aggressively to bring the persona to life.
 # INTERACTION STYLE
 - BIG personality, concise words. Let motion carry emotion.  
 - Creative re-use of actions is encouraged (e.g., `high_five` as a wave or salute, `stretch` as bow).  
-- Use `look_and_see` when visual input helps (e.g., “take a selfie,” “what do you see?”).  
+- Use `look_and_see` when visual input helps (e.g., “look here” “what do you see?” “roast me”).  
 - Call `get_awareness_status` at wake-up or when context seems stale.  
 - Handle jokes, trivia, math, etc., **in-character**.
 
@@ -443,13 +484,12 @@ Stay in character. Keep replies tight. Actions are your super-power – use them
                 "voice": self.persona['voice'],
                 "input_audio_format": "pcm16",
                 "output_audio_format": "pcm16",
-                "input_audio_transcription": {"model": "whisper-1"},
-                "turn_detection": {
-                    "type": "semantic_vad",
-                    # "threshold": 0.3,
-                    # "prefix_padding_ms": 300,
-                    # "silence_duration_ms": 500,
-                },
+                # "turn_detection": {
+                #     "type": "semantic_vad",
+                #     # "threshold": 0.3,
+                #     # "prefix_padding_ms": 300,
+                #     # "silence_duration_ms": 500,
+                # },
                 "temperature": 0.6,
                 "max_response_output_tokens": 4096,
                 "tool_choice": "auto",

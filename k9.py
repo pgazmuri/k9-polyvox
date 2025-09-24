@@ -25,7 +25,7 @@ RATE = 24000  # Changed sample rate to 44100
 
 # WebSocket configuration
 WS_URL = "wss://api.openai.com/v1/realtime"
-MODEL = "gpt-4o-realtime-preview"
+MODEL = "gpt-realtime"
 
 
 headers = {

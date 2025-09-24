@@ -31,8 +31,8 @@ class FunctionCallManager:
                 # You could pass a persona prompt if you want
                 #log persona to console
                 print(f"[FunctionCallManager] Persona: {self.client.persona}")
-                result = await self.action_manager.take_photo(persona=self.client.persona, question=question)
-                print(f"[FunctionCallManager] Result of 'look_and_see': {result}")
+                result = await self.action_manager.take_photo(persona=self.client.persona, question=question, client=self.client)
+                print(f"[FunctionCallManager] look_and_see triggered image send: {result}")
                 return result
 
             elif func_name == 'get_system_status':

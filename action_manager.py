@@ -19,7 +19,7 @@ else:
     print("[ActionManager] Using REAL preset actions.")
     from preset_actions import *
 
-from t2_vision import TakePictureAndReportBack, is_person_detected, close_camera
+from t2_vision import capture_image, is_person_detected, close_camera
 from persona_generator import generate_persona
 
 from display_manager import display_message, display_status
@@ -108,7 +108,12 @@ class ActionManager:
         music = self.speak("powerup")
         await self.perform_action('sit,look_forward')
         await powerup_lightbar_task  # Wait for the power-up sequence to finish
-        music.music_stop()
+        # Guard against speak() returning False/None
+        try:
+            if music and hasattr(music, 'music_stop'):
+                music.music_stop()
+        except Exception as e:
+            print(f"[ActionManager] Error stopping music in initialize_posture: {e}")
         self.isPlayingSound = False
         self.lightbar_breath()
     
@@ -352,8 +357,8 @@ class ActionManager:
         # Sound direction from state
         status_parts.append(f"Last Sound Direction: {self.state.last_sound_direction if self.state.last_sound_direction else 'None detected yet'}")
 
-        # System status
-        cpu_usage = psutil.cpu_percent(interval=1)
+        # System status (non-blocking instantaneous CPU sample to avoid stall)
+        cpu_usage = psutil.cpu_percent(interval=None)
         memory_info = psutil.virtual_memory()
         disk_info = psutil.disk_usage('/')
         top_processes = sorted(
@@ -416,207 +421,212 @@ class ActionManager:
 
         return "\n".join(status_parts)
 
-    async def take_photo(self, persona, question="", silent=False):
-        """
-        Asks PiDog to flash a certain LED style, then triggers the camera routine
-        and calls `TakePictureAndReportBack` with the prompt. Then reverts LED style.
-        """
+    async def take_photo(self, persona, question="", silent=False, client=None):
+        """Capture an image and send to realtime API. Lightbar effect only (no sound)."""
+    # New realtime image capture path (no legacy GPT vision call)
         self.isTakingAction = True
+        image_path = None
         try:
-            # optionally play a "camera shutter" or "beep" sound
-            if not silent: 
+            if not silent:
                 self.lightbar_boom()
-                self.isPlayingSound = True
-                music = self.speak("calc")
-            self.vision_description = await TakePictureAndReportBack(
-                persona['image_prompt'] + f" {question}"
-            )
-        #add error handling
+            image_path = capture_image()
+            if client and image_path:
+                await client.send_image_and_request_response(image_path)
+            self.vision_description = "Image captured and sent." if image_path else "Image capture failed."
         except Exception as e:
             print(f"[ActionManager] Error taking photo: {e}")
             self.vision_description = "Error taking photo."
         finally:
-            if not silent: 
+            if not silent:
                 self.lightbar_breath()
-                music.music_stop()
-                self.isPlayingSound = False
-                self.isTakingAction = False
-        
-        print("[ActionManager] Vision result: ", self.vision_description)
+            self.isPlayingSound = False
+            self.isTakingAction = False
         return self.vision_description
 
     async def perform_action(self, action_name):
-        """
-        Executes one or more PiDog actions by name. 
-        If multiple actions are comma-separated, executes them sequentially.
-        """
+        """Executes one or more PiDog actions by name (comma-separated)."""
         print(f"[ActionManager] Performing action(s): {action_name}")
         self.isTakingAction = True
-        actions = [a.strip() for a in action_name.split(',')]
-
+        if not action_name:
+            self.isTakingAction = False
+            return
+        actions = [a.strip() for a in action_name.split(',') if a.strip()]
         for action in actions:
-            if action == 'wag_tail':
-                wag_tail(self.my_dog, step_count=5, speed=100)
-            elif action == 'bark':
-                bark(self.my_dog)
-            elif action == 'bark_harder':
-                bark_action(self.my_dog, speak='single_bark_2')
-                self.state.posture = "standing"
-                await self.reset_head()
-            elif action == 'pant':
-                pant(self.my_dog)
-            elif action == 'howling':
-                howling(self.my_dog)
-                self.state.posture = "sitting"
-                await self.reset_head()
-            elif action == 'stretch':
-                stretch(self.my_dog)
-                self.state.posture = "sitting"
-                await self.reset_head()
-            elif action == 'push_up':
-                if self.state.posture == "sitting":
+            try:
+                old_posture = self.state.posture
+                if action == 'wag_tail':
+                    wag_tail(self.my_dog, step_count=5, speed=100)
+                elif action == 'bark':
+                    bark(self.my_dog)
+                elif action == 'bark_harder':
+                    bark_action(self.my_dog, speak='single_bark_2')
+                    self.state.posture = "standing"
+                elif action == 'pant':
+                    pant(self.my_dog)
+                elif action == 'howling':
+                    howling(self.my_dog)
+                    self.state.posture = "sitting"
+                elif action == 'stretch':
+                    stretch(self.my_dog)
+                    self.state.posture = "sitting"
+                elif action == 'push_up':
+                    if self.state.posture == "sitting":
+                        sit_2_stand(self.my_dog)
+                    push_up(self.my_dog)
+                    self.state.posture = "standing"
+                elif action == 'scratch':
+                    if self.state.posture == "standing":
+                        sit_down(self.my_dog)
+                    scratch(self.my_dog)
+                    self.state.posture = "sitting"
+                elif action == 'handshake':
+                    if self.state.posture == "standing":
+                        sit_down(self.my_dog)
+                    hand_shake(self.my_dog)
+                    self.state.posture = "sitting"
+                elif action == 'high_five':
+                    if self.state.posture == "standing":
+                        sit_down(self.my_dog)
+                    high_five(self.my_dog)
+                    self.state.posture = "sitting"
+                elif action == 'lick_hand':
+                    if self.state.posture == "standing":
+                        sit_down(self.my_dog)
+                    lick_hand(self.my_dog)
+                    self.state.posture = "sitting"
+                elif action == 'shake_head':
+                    shake_head(self.my_dog)
+                elif action == 'relax_neck':
+                    relax_neck(self.my_dog)
+                elif action == 'nod':
+                    nod(self.my_dog)
+                elif action == 'think':
+                    think(self.my_dog)
+                elif action == 'recall':
+                    recall(self.my_dog)
+                elif action == 'turn_head_down':
+                    look_down(self.my_dog, pitch_comp=-20 if self.state.posture == "sitting" else 0)
+                    self.state.head_position = "down"
+                elif action == 'turn_head_up':
+                    look_up(self.my_dog, pitch_comp=-20 if self.state.posture == "sitting" else 0)
+                    self.state.head_position = "up"
+                elif action == 'turn_head_down_left':
+                    head_down_left(self.my_dog, pitch_comp=-20 if self.state.posture == "sitting" else 0)
+                    self.state.head_position = "down left"
+                elif action == 'turn_head_down_right':
+                    head_down_right(self.my_dog, pitch_comp=-20 if self.state.posture == "sitting" else 0)
+                    self.state.head_position = "down right"
+                elif action == 'turn_head_up_left':
+                    head_up_left(self.my_dog, pitch_comp=-20 if self.state.posture == "sitting" else 0)
+                    self.state.head_position = "up left"
+                elif action == 'turn_head_up_right':
+                    head_up_right(self.my_dog, pitch_comp=-20 if self.state.posture == "sitting" else 0)
+                    self.state.head_position = "up right"
+                elif action == 'turn_head_forward':
+                    look_forward(self.my_dog, pitch_comp=-20 if self.state.posture == "sitting" else 0)
+                    self.state.head_position = "forward"
+                elif action == 'turn_head_left':
+                    look_left(self.my_dog, pitch_comp=-20 if self.state.posture == "sitting" else 0)
+                    self.state.head_position = "left"
+                elif action == 'turn_head_right':
+                    look_right(self.my_dog, pitch_comp=-20 if self.state.posture == "sitting" else 0)
+                    self.state.head_position = "right"
+                elif action == 'fluster':
+                    fluster(self.my_dog)
+                elif action == 'surprise':
+                    surprise(self.my_dog)
+                    self.state.posture = "sitting"
+                elif action == 'alert':
+                    alert(self.my_dog)
+                    self.state.posture = "sitting"
+                elif action == 'attack_posture':
+                    attack_posture(self.my_dog)
+                    self.state.posture = "standing"
+                elif action == 'body_twisting':
+                    body_twisting(self.my_dog)
+                elif action == 'feet_shake':
+                    feet_shake(self.my_dog)
+                elif action == 'sit_2_stand':
                     sit_2_stand(self.my_dog)
-                push_up(self.my_dog)
-                self.state.posture = "standing"
-                await self.reset_head()
-            elif action == 'scratch':
-                if self.state.posture == "standing":
+                    self.state.posture = "sitting"
+                elif action == 'bored':
+                    waiting(self.my_dog)
+                elif action == 'walk_forward':
+                    if self.state.posture == "sitting":
+                        sit_2_stand(self.my_dog)
+                    walk_forward(self.my_dog, step_count=5, speed=100)
+                    self.state.posture = "standing"
+                elif action == 'walk_backward':
+                    if self.state.posture == "sitting":
+                        sit_2_stand(self.my_dog)
+                    walk_backward(self.my_dog, step_count=5, speed=100)
+                    self.state.posture = "standing"
+                elif action == 'lie':
+                    lie_down(self.my_dog)
+                    # Choose sitting as a neutral/resting classification (was 'standing' previously)
+                    self.state.posture = "sitting"
+                elif action == 'stand':
+                    if self.state.posture == "sitting":
+                        sit_2_stand(self.my_dog)
+                    else:
+                        stand_up(self.my_dog)
+                    self.state.posture = "standing"
+                elif action == 'sit':
                     sit_down(self.my_dog)
-                scratch(self.my_dog)
-                self.state.posture = "sitting"
-                await self.reset_head()
-            elif action == 'handshake':
-                if self.state.posture == "standing":
-                    sit_down(self.my_dog)
-                hand_shake(self.my_dog)
-                self.state.posture = "sitting"
-                await self.reset_head()
-            elif action == 'high_five':
-                if self.state.posture == "standing":
-                    sit_down(self.my_dog)
-                high_five(self.my_dog)
-                self.state.posture = "sitting"
-                await self.reset_head()
-            elif action == 'lick_hand':
-                if self.state.posture == "standing":
-                    sit_down(self.my_dog)
-                lick_hand(self.my_dog)
-                self.state.posture = "sitting"
-                await self.reset_head()
-            elif action == 'shake_head':
-                shake_head(self.my_dog)
-            elif action == 'relax_neck':
-                relax_neck(self.my_dog)
-            elif action == 'nod':
-                nod(self.my_dog)
-            elif action == 'think':
-                think(self.my_dog)
-            elif action == 'recall':
-                recall(self.my_dog)
-            elif action == 'turn_head_down':
-                look_down(self.my_dog, pitch_comp=-30 if self.state.posture == "sitting" else 0)
-                self.state.head_position = "down"
-            elif action == 'turn_head_up':
-                look_up(self.my_dog, pitch_comp=-30 if self.state.posture == "sitting" else 0)
-                self.state.head_position = "up"
-            elif action == 'turn_head_down_left':
-                head_down_left(self.my_dog, pitch_comp=-30 if self.state.posture == "sitting" else 0)
-                self.state.head_position = "down left"
-            elif action == 'turn_head_down_right':
-                head_down_right(self.my_dog, pitch_comp=-30 if self.state.posture == "sitting" else 0)
-                self.state.head_position = "down right"
-            elif action == 'turn_head_up_left':
-                head_up_left(self.my_dog, pitch_comp=-30 if self.state.posture == "sitting" else 0)
-                self.state.head_position = "up left"
-            elif action == 'turn_head_up_right':
-                head_up_right(self.my_dog, pitch_comp=-30 if self.state.posture == "sitting" else 0)
-                self.state.head_position = "up right"
-            elif action == 'turn_head_forward':
-                look_forward(self.my_dog, pitch_comp=-30 if self.state.posture == "sitting" else 0)
-                self.state.head_position = "forward"
-            elif action == 'turn_head_left':
-                look_left(self.my_dog, pitch_comp=-30 if self.state.posture == "sitting" else 0)
-                self.state.head_position = "left"
-            elif action == 'turn_head_right':
-                look_right(self.my_dog, pitch_comp=-30 if self.state.posture == "sitting" else 0)
-                self.state.head_position = "right"
-            elif action == 'fluster':
-                fluster(self.my_dog)
-            elif action == 'surprise':
-                surprise(self.my_dog)
-                self.state.posture = "sitting"
-                await self.reset_head()
-            elif action == 'alert':
-                alert(self.my_dog)
-                self.state.posture = "sitting"
-                await self.reset_head()
-            elif action == 'attack_posture':
-                attack_posture(self.my_dog)
-                self.state.posture = "standing"
-                await self.reset_head()
-            elif action == 'body_twisting':
-                body_twisting(self.my_dog)
-            elif action == 'feet_shake':
-                feet_shake(self.my_dog)
-            elif action == 'sit_2_stand':
-                sit_2_stand(self.my_dog)
-                self.state.posture = "sitting"
-                await self.reset_head()
-            elif action == 'bored':
-                waiting(self.my_dog)
-            elif action == 'walk_forward':
-                if self.state.posture == "sitting":
-                    sit_2_stand(self.my_dog)
-                walk_forward(self.my_dog, step_count=5, speed=100)
-                self.state.posture = "standing"
-                await self.reset_head()
-            elif action == 'walk_backward':
-                if self.state.posture == "sitting":
-                    sit_2_stand(self.my_dog)
-                walk_backward(self.my_dog, step_count=5, speed=100)
-                self.state.posture = "standing"
-                await self.reset_head()
-            elif action == 'lie':
-                lie_down(self.my_dog)
-                self.state.posture = "standing"
-                await self.reset_head()
-            elif action == 'stand':
-                if self.state.posture == "sitting":
-                    sit_2_stand(self.my_dog)
+                    self.state.posture = "sitting"
+                elif action == 'walk_left':
+                    if self.state.posture == "sitting":
+                        sit_2_stand(self.my_dog)
+                    turn_left(self.my_dog, step_count=5, speed=100)
+                    self.state.posture = "standing"
+                elif action == 'walk_right':
+                    if self.state.posture == "sitting":
+                        sit_2_stand(self.my_dog)
+                    turn_right(self.my_dog, step_count=5, speed=100)
+                    self.state.posture = "standing"
+                elif action == 'tilt_head_left':
+                    tilt_head_left(self.my_dog)
+                elif action == 'tilt_head_right':
+                    tilt_head_right(self.my_dog)
+                elif action == 'doze_off':
+                    doze_off(self.my_dog, speed=100)
+                    self.state.posture = "standing"
                 else:
-                    stand_up(self.my_dog)
-                self.state.posture = "standing"
-                await self.reset_head()
-            elif action == 'sit':
-                sit_down(self.my_dog)
-                self.state.posture = "sitting"
-                await self.reset_head()
-            elif action == 'walk_left':
-                if self.state.posture == "sitting":
-                    sit_2_stand(self.my_dog)
-                turn_left(self.my_dog, step_count=5, speed=100)
-                self.state.posture = "standing"
-                await self.reset_head()
-            elif action == 'walk_right':
-                if self.state.posture == "sitting":
-                    sit_2_stand(self.my_dog)
-                turn_right(self.my_dog, step_count=5, speed=100)
-                self.state.posture = "standing"
-                await self.reset_head()
-            elif action == 'tilt_head_left':
-                tilt_head_left(self.my_dog)
-            elif action == 'tilt_head_right':
-                tilt_head_right(self.my_dog)
-            elif action == 'doze_off':
-                doze_off(self.my_dog, speed=100)
-                self.state.posture = "standing"
-                await self.reset_head()
-            else:
-                print(f"[ActionManager] Unknown action: {action}")
-            
+                    print(f"[ActionManager] Unknown action: {action}")
+
+                # Apply head pitch compensation if posture changed
+                if old_posture != self.state.posture:
+                    self._apply_posture_head_compensation(old_posture, self.state.posture)
+            except Exception as e:
+                print(f"[ActionManager] Error during action '{action}': {e}")
         self.my_dog.wait_all_done()
         self.isTakingAction = False
         print("[ActionManager] Done performing actions.")
+
+    def _apply_posture_head_compensation(self, old_posture: str, new_posture: str):
+        """Maintain perceived head direction when switching between sitting and standing.
+
+        Sitting head actions previously used a -20 pitch compensation. When moving to standing
+        we add +30 to current pitch; when moving into sitting we subtract 30, but only for
+        head positions that were using pitch compensation.
+        """
+        try:
+            if old_posture == new_posture:
+                return
+            compensated_positions = {"forward","up","down","up left","up right","down left","down right"}
+            if self.state.head_position not in compensated_positions:
+                return
+            y, r, p = self.my_dog.head_current_angles
+            if old_posture == "sitting" and new_posture == "standing":
+                target_p = p + 30
+            elif old_posture == "standing" and new_posture == "sitting":
+                target_p = p - 20
+            else:
+                return
+            self.my_dog.head_move_raw([[y, r, target_p]], speed=80)
+            self.my_dog.wait_head_done()
+        except Exception as e:
+            print(f"[ActionManager] Head compensation error: {e}")
 
     def lightbar_breath(self):
         self.my_dog.rgb_strip.set_mode(style="breath", color='pink', bps=0.5)
@@ -949,12 +959,16 @@ class ActionManager:
                 await asyncio.sleep(1)  # Prevent tight loop on failure
 
     async def perform_inline_photo(self, client):
-        #log persona to console
-        print(f"[ActionManager] Performing inline photo with persona: {client.persona}")
-        self.vision_description = await TakePictureAndReportBack(
-                            f"Describe the current scene."
-                        )
-        client.send_text_message(f"In the direction your head is facing ({self.state.head_position}), you can see: {self.vision_description}. You may use this information in future responses, or when asked about your surroundings. You don't need to look_and_see right now.")
+        print(f"[ActionManager] Performing inline photo (wake-up) with persona: {client.persona}")
+        try:
+            self.lightbar_boom()
+            image_path = capture_image()
+            if image_path:
+                await client.send_image_and_request_response(image_path)
+        except Exception as e:
+            print(f"[ActionManager] Inline photo error: {e}")
+        finally:
+            self.lightbar_breath()
 
     async def remind_of_default_goal(self, client):
         """

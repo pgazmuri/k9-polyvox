@@ -22,9 +22,16 @@ class AudioManager:
     def __init__(self, action_manager, loop, input_rate=48000, output_rate=24000, chunk_size=2048):
         self.action_manager = action_manager
         self.loop = loop  # Store the loop reference
-        self.input_rate = input_rate
-        self.output_rate = output_rate
-        self.chunk_size = chunk_size  # Chunk size for input stream
+        # Allow environment overrides to tune latency without code changes
+        import os
+        self.input_rate = int(os.environ.get("AUDIO_INPUT_RATE", input_rate))
+        self.output_rate = int(os.environ.get("AUDIO_OUTPUT_RATE", output_rate))
+        env_chunk = os.environ.get("AUDIO_CHUNK_SIZE")
+        if env_chunk:
+            self.chunk_size = int(env_chunk)
+        else:
+            # If original default (2048 ≈42.7ms @48k) choose lower default for responsiveness
+            self.chunk_size = 1024 if chunk_size == 2048 else chunk_size
         self.p = pyaudio.PyAudio()
         self.input_stream = None
         self.output_stream = None
@@ -33,6 +40,8 @@ class AudioManager:
         self.dropped_frames = 0
         self.is_shutting_down = False  # Shutdown flag
         self._playback_task = None  # To manage the playback task
+        self.last_user_audio_chunk_time = 0.0  # latency instrumentation
+        self.enable_barge_in = os.environ.get("ENABLE_BARGE_IN", "0") == "1"
 
         # Find device indices (replace with your actual logic if needed)
         # self.input_device_index = self._find_device_index("pulse")  # Example
@@ -145,16 +154,28 @@ class AudioManager:
     def audio_input_callback(self, in_data, frame_count, time_info, status):
         audio_data = np.frombuffer(in_data, dtype=np.int16)
         self.latest_volume = np.sqrt(np.mean(audio_data**2))
-
-
-        #if pidog is talking, and the speaker isn't disabled, we need to ignore incoming audio, as it's likely to be feedback
-        if self.action_manager.isTalkingMovement and not self.action_manager.PIDOG_SPEAKER_DISABLED:
+        # If robot speaking, drop mic unless barge-in enabled
+        if (self.action_manager.isTalkingMovement and not self.action_manager.PIDOG_SPEAKER_DISABLED \
+            and not self.enable_barge_in):
             return (None, pyaudio.paContinue)
         
         try:
-            resampled_data = resampy.resample(audio_data, self.input_rate, self.output_rate)
+            if self.input_rate == self.output_rate:
+                resampled_data = audio_data
+            else:
+                import os
+                method = os.environ.get("RESAMPLE_METHOD", "resampy")
+                if method == "linear":
+                    # Simple linear interpolation (fast, lower quality)
+                    duration = len(audio_data) / self.input_rate
+                    target_len = int(duration * self.output_rate)
+                    x_old = np.arange(len(audio_data))
+                    x_new = np.linspace(0, len(audio_data)-1, target_len)
+                    resampled_data = np.interp(x_new, x_old, audio_data).astype(np.int16)
+                else:
+                    resampled_data = resampy.resample(audio_data, self.input_rate, self.output_rate)
             resampled_bytes = resampled_data.astype(np.int16).tobytes()
-
+            self.last_user_audio_chunk_time = time.time()
             if self.loop.is_running():
                 asyncio.run_coroutine_threadsafe(self._safe_queue_put(resampled_bytes), self.loop)
         except Exception as e:

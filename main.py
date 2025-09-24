@@ -19,11 +19,10 @@ from keys import OPENAI_API_KEY  # Adjust to wherever your key is
 # Or define OPENAI_API_KEY = "..."
 
 WS_URL = "wss://api.openai.com/v1/realtime"
-MODEL = "gpt-4o-realtime-preview"
+MODEL = "gpt-realtime"
 
 headers = {
     "Authorization": f"Bearer {OPENAI_API_KEY}",
-    "OpenAI-Beta": "realtime=v1"
 }
 
 # Global references for cleanup during shutdown
