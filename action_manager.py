@@ -106,7 +106,7 @@ class ActionManager:
         powerup_lightbar_task = asyncio.create_task(self.power_up_sequence())
         self.isPlayingSound = True
         music = self.speak("powerup")
-        await self.perform_action('sit,look_forward')
+        await self.perform_action('sit,turn_head_forward')
         await powerup_lightbar_task  # Wait for the power-up sequence to finish
         # Guard against speak() returning False/None
         try:
@@ -786,8 +786,11 @@ class ActionManager:
         # Reset the head position to the last known state
 
     async def reset_head(self):
+        # Avoid spamming forward head resets if already forward or unknown
+        if self.state.head_position in (None, "forward"):
+            return
         if self.state.head_position == "forward":
-            await self.perform_action("turn_head_forward")
+            return
         elif self.state.head_position == "left":
             await self.perform_action("turn_head_left")
         elif self.state.head_position == "right":
@@ -805,7 +808,7 @@ class ActionManager:
         elif self.state.head_position == "down right":       
             await self.perform_action("turn_head_down_right")
         else:
-            await self.perform_action("turn_head_forward")
+            return
 
     def get_available_actions(self):
         """Returns the list of all available actions the robot dog can perform."""

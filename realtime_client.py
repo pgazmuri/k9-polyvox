@@ -48,6 +48,7 @@ class RealtimeClient:
         self.message_queue = Queue()  # Buffer to store unique messages
         self.is_flushing = False  # To prevent overlapping flush tasks
 
+
     async def connect(self):
         """Open a websocket connection to GPT and start listening."""
         self.is_shutdown = False
@@ -149,9 +150,10 @@ class RealtimeClient:
             async for message in self.ws:
                 try:
                     response = json.loads(message)
-                    msg_type = response['type']
+                    msg_type = response.get('type')
                     
-                    if msg_type == 'response.audio.delta' and response.get('delta'):
+                    # Unified handling for audio output chunks
+                    if msg_type == 'response.output_audio.delta' and response.get('delta'):
                         # Audio chunk (mark start sooner for reduced perceived latency)
                         if not self.isReceivingAudio:
                             self.isReceivingAudio = True
@@ -159,28 +161,39 @@ class RealtimeClient:
                             if hasattr(self.audio_manager, 'last_user_audio_chunk_time'):
                                 gap_ms = (time.time() - self.audio_manager.last_user_audio_chunk_time) * 1000
                                 print(f"[LAT] user->first_model_audio: {gap_ms:.1f} ms")
+                            # Kick off talking movement once when audio starts
+                            if not self.action_manager.isTalkingMovement:
+                                asyncio.create_task(self.action_manager.start_talking())
                         audio_chunk = base64.b64decode(response['delta'])
                         self.audio_manager.queue_audio(audio_chunk)
                     
-                    
-                    elif msg_type == 'response.output_item.added':
-                        #clear the audio buffer when a new response is created
-                        if(response['output_index'] == 0 and response['item']['type'] == 'message'):
-                            print(f"[RealtimeClient] New response created {response}, clearing audio buffer...")
-                            self.audio_manager.clear_audio_buffer()
-                        
+                    elif msg_type in ('response.output_item.added', 'conversation.item.added'):
+                        # Clear audio buffer when a new assistant message response starts
+                        item = response.get('item', {})
+                        # Older response.* events used output_index/item/type structure; keep guard flexible
+                        if (response.get('output_index') == 0 and item.get('type') == 'message') or item.get('role') == 'assistant':
+                            print(f"[RealtimeClient] New item added {response.get('event_id','?')} - clearing audio buffer...")
+                            try:
+                                self.audio_manager.clear_audio_buffer()
+                            except Exception as e:
+                                print(f"[RealtimeClient] Error clearing audio buffer: {e}")
 
-                    elif msg_type == 'response.audio_transcript.delta':
+                    elif msg_type in ('response.output_item.done', 'conversation.item.done'):
+                        # Placeholder: could finalize any in-progress item assembly
+                        pass
+                        
+                    elif msg_type == 'response.output_audio_transcript.delta':
                         # Partial transcript while GPT is speaking
                         self.isReceivingAudio = True
                         print(response['delta'], end='')
                     elif msg_type == 'response.audio.done':
                         # GPT finished speaking
-                        #await self.action_manager.stop_talking()
+                        if self.action_manager.isTalkingMovement:
+                            asyncio.create_task(self.action_manager.stop_talking())
                         self.isReceivingAudio = False
                         print("\n[RealtimeClient] Audio response completed.")
 
-                    elif msg_type == 'response.text.delta' and response.get('delta'):
+                    elif msg_type == 'response.output_text.delta' and response.get('delta'):
                         # GPT text output
                         print(f"Assistant: {response['delta']}")
                     
@@ -189,7 +202,7 @@ class RealtimeClient:
                         #print(f"Assistant: {response}")
                         
 
-                    elif msg_type == 'response.function_call_arguments.done':
+                    elif msg_type == 'response.function_call_arguments.done':  # unchanged in GA per notes
                         # GPT wants to call a function with these arguments
                         self.function_call_queue.put_nowait(response)
 
@@ -315,8 +328,8 @@ class RealtimeClient:
                     result = await self.function_call_manager.handle_function_call(function_call)
                     await self.send_function_call_result(function_call, result)
                 else:
-                    if self.isReceivingAudio and not self.action_manager.isTalkingMovement:
-                        asyncio.create_task(self.action_manager.start_talking())
+                    # Removed auto start_talking here; now tied to first audio chunk to avoid rapid loop
+                    pass
 
             except Exception as e:
                 print(f"[RealtimeClient] Error in process_function_calls: {e}")
@@ -346,8 +359,7 @@ class RealtimeClient:
         if function_call['name'] == "get_awareness_status":
             await self.send("response.create", {
                 "response": {
-                    "tool_choice": "none",
-                    "modalities": ["audio", "text"],
+                    "tool_choice": "none"
                 }})
         else:
             await self.send("response.create", {})
@@ -426,7 +438,8 @@ class RealtimeClient:
 
         session_config = {
             "session": {
-                "modalities": ["text", "audio"],
+                    # Realtime API now requires explicit session.type
+                    "type": "realtime",
                 "instructions": f"""
 # CORE ROLE
 You are K9-PolyVox, a physical robot dog.  
@@ -481,17 +494,14 @@ About once every 3-5 turns, add a short, persona-appropriate **“surprise move�
 Stay in character. Keep replies tight. Actions are your super-power – use them!
 
 """,
-                "voice": self.persona['voice'],
-                "input_audio_format": "pcm16",
-                "output_audio_format": "pcm16",
+                "audio": {"output": {"voice": self.persona['voice'], "format": {"type": "audio/pcm", "rate": 24000}},
+                          "input": { "format": {"type": "audio/pcm", "rate": 24000}} },
                 # "turn_detection": {
                 #     "type": "semantic_vad",
                 #     # "threshold": 0.3,
                 #     # "prefix_padding_ms": 300,
                 #     # "silence_duration_ms": 500,
                 # },
-                "temperature": 0.6,
-                "max_response_output_tokens": 4096,
                 "tool_choice": "auto",
                 "tools": current_tools
             }
@@ -534,7 +544,6 @@ Stay in character. Keep replies tight. Actions are your super-power – use them
                 "response":{
                     "conversation": "none",
                     "metadata": {"topic": topic},
-                    "modalities": ["text"],
                     "input": [
                         {
                             "type": "message",
@@ -551,4 +560,5 @@ Stay in character. Keep replies tight. Actions are your super-power – use them
                 }
             })
         except Exception as e:
+            # Removed unsupported response.modalities (modalities defined at session level)
             print(f"[RealtimeClient] Error in make_out_of_band_request: {e}")
