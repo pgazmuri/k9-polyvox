@@ -73,7 +73,7 @@ async def shutdown(signal_obj=None):
     if action_manager:
         print("Cleaning up action manager...")
         try:
-            action_manager.close()
+            await action_manager.close()
         except SystemExit as e:
             print(f"[Shutdown] PiDog called sys.exit({e.code}), ignoring to allow clean shutdown.")
 

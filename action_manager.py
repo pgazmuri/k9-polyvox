@@ -4,8 +4,20 @@ import psutil
 import asyncio
 import random
 import os
-from state_manager import RobotDogState
+from typing import Optional
+
+from state_manager import RobotDogState, HeadPose
 from robot_hat import utils
+from head_controller import HeadController
+from vilib import Vilib
+
+FACE_TRACK_UPDATE_INTERVAL = float(os.environ.get("FACE_TRACK_UPDATE_INTERVAL", "0.05"))
+FACE_TRACK_RECENTER_TIMEOUT = float(os.environ.get("FACE_TRACK_RECENTER_TIMEOUT", "2.0"))
+FACE_TRACK_RECENTER_STEP = float(os.environ.get("FACE_TRACK_RECENTER_STEP", "2.0"))
+HEAD_POSTURE_PITCH_COMP = {
+    "sitting": float(os.environ.get("SITTING_HEAD_PITCH_COMP", "-20")),
+    "standing": float(os.environ.get("STANDING_HEAD_PITCH_COMP", "0")),
+}
 
 # External dependencies
 from pidog import Pidog
@@ -19,7 +31,13 @@ else:
     print("[ActionManager] Using REAL preset actions.")
     from preset_actions import *
 
-from t2_vision import capture_image, is_person_detected, close_camera
+from t2_vision import (
+    capture_image,
+    is_person_detected,
+    close_camera,
+    CAMERA_WIDTH,
+    CAMERA_HEIGHT,
+)
 from persona_generator import generate_persona
 
 from display_manager import display_message, display_status
@@ -45,18 +63,189 @@ class ActionManager:
             self.PIDOG_SPEAKER_DISABLED = False
             self.my_dog = Pidog()
         print("PiDog Initiated...")
+
+        self.head_controller = HeadController(self.my_dog, update_interval=FACE_TRACK_UPDATE_INTERVAL)
+        self.head_controller.start()
+        self._face_tracking_task: Optional[asyncio.Task] = None
+        self._face_tracking_people: int = 0
+        self._face_tracking_last_seen: float = 0.0
+        self._face_tracking_enabled: bool = os.environ.get("FACE_DETECT_ENABLED", "1") == "1"
+        self._face_tracking_return_pose = HeadPose()
         
         display_message("Status", "PiDog Loaded...")
         time.sleep(1)  # small delay for hardware init
         self.reset_state_for_new_persona()
+        self._schedule_initial_head_pose()
+        if self._face_tracking_enabled:
+            self._start_face_tracking()
 
-    def close(self):
+    def _schedule_initial_head_pose(self) -> None:
+        try:
+            loop = asyncio.get_running_loop()
+        except RuntimeError:
+            return
+        loop.create_task(self._initialize_head_pose_async())
+
+    async def _initialize_head_pose_async(self) -> None:
+        pitch_bias = HEAD_POSTURE_PITCH_COMP.get(self.state.posture, 0.0)
+        await self.head_controller.set_posture_bias(pitch_bias=pitch_bias)
+        await self.head_controller.home()
+        self._sync_head_pose()
+        self._face_tracking_return_pose = self.state.head_pose.copy()
+
+    def _sync_head_pose(self) -> None:
+        self.state.head_pose = self.head_controller.current_pose()
+
+    async def _set_head_pose(
+        self,
+        *,
+        yaw: Optional[float] = None,
+        pitch: Optional[float] = None,
+        roll: Optional[float] = None,
+        update_return: bool = True,
+    ) -> None:
+        await self.head_controller.set_pose(yaw=yaw, pitch=pitch, roll=roll)
+        self._sync_head_pose()
+        if update_return:
+            self._face_tracking_return_pose = self.state.head_pose.copy()
+
+    async def _adjust_head_pose(
+        self,
+        *,
+        delta_yaw: float = 0.0,
+        delta_pitch: float = 0.0,
+        delta_roll: float = 0.0,
+        update_return: bool = False,
+    ) -> None:
+        await self.head_controller.adjust_pose(delta_yaw=delta_yaw, delta_pitch=delta_pitch, delta_roll=delta_roll)
+        self._sync_head_pose()
+        if update_return:
+            self._face_tracking_return_pose = self.state.head_pose.copy()
+
+    async def _update_posture_bias(self, old_posture: Optional[str], new_posture: Optional[str]) -> None:
+        if old_posture == new_posture:
+            return
+        pitch_bias = HEAD_POSTURE_PITCH_COMP.get(new_posture, 0.0)
+        await self.head_controller.set_posture_bias(pitch_bias=pitch_bias)
+        self._sync_head_pose()
+
+    async def _sync_head_from_hardware(self, update_return: bool = False) -> None:
+        pose = await self.head_controller.sync_with_hardware()
+        self.state.head_pose = pose
+        if update_return:
+            self._face_tracking_return_pose = pose.copy()
+
+    def _start_face_tracking(self) -> None:
+        if self._face_tracking_task and not self._face_tracking_task.done():
+            return
+        try:
+            loop = asyncio.get_running_loop()
+        except RuntimeError:
+            return
+        self._face_tracking_task = loop.create_task(self._face_tracking_loop())
+
+    async def _stop_face_tracking(self) -> None:
+        if not self._face_tracking_task:
+            return
+        self._face_tracking_task.cancel()
+        try:
+            await self._face_tracking_task
+        except asyncio.CancelledError:
+            pass
+        self._face_tracking_task = None
+
+    async def _face_tracking_loop(self) -> None:
+        center_x = CAMERA_WIDTH / 2.0
+        center_y = CAMERA_HEIGHT / 2.0
+        yaw_min, yaw_max = self.head_controller.yaw_limits
+        pitch_min, pitch_max = self.head_controller.pitch_limits
+        try:
+            while True:
+                try:
+                    people = int(Vilib.detect_obj_parameter.get('human_n', 0))
+                    self._face_tracking_people = people
+                    now = time.time()
+
+                    if people > 0:
+                        self._face_tracking_last_seen = now
+                        if not self._face_tracking_active:
+                            self._face_tracking_active = True
+
+                        ex = float(Vilib.detect_obj_parameter.get('human_x', center_x)) - center_x
+                        ey = float(Vilib.detect_obj_parameter.get('human_y', center_y)) - center_y
+
+                        yaw_step = 0.0
+                        if ex > 15:
+                            yaw_step = -0.5 * math.ceil(ex / 30.0)
+                        elif ex < -15:
+                            yaw_step = 0.5 * math.ceil(-ex / 30.0)
+
+                        pitch_step = 0.0
+                        if ey > 25:
+                            pitch_step = -1.0 * math.ceil(ey / 50.0)
+                        elif ey < -25:
+                            pitch_step = 1.0 * math.ceil(-ey / 50.0)
+
+                        if yaw_step != 0.0 or pitch_step != 0.0:
+                            pose = self.state.head_pose
+                            target_yaw = max(yaw_min, min(yaw_max, pose.yaw + yaw_step))
+                            target_pitch = max(pitch_min, min(pitch_max, pose.pitch + pitch_step))
+                            await self._set_head_pose(yaw=target_yaw, pitch=target_pitch, update_return=False)
+
+                        self.state.face_detected_at = now
+                    else:
+                        if self._face_tracking_active and (now - self._face_tracking_last_seen) > FACE_TRACK_RECENTER_TIMEOUT:
+                            await self._recenter_head_step()
+                            if abs(self.state.head_pose.yaw - self._face_tracking_return_pose.yaw) < 0.5 \
+                               and abs(self.state.head_pose.pitch - self._face_tracking_return_pose.pitch) < 0.5:
+                                self._face_tracking_active = False
+
+                except Exception as face_err:
+                    print(f"[ActionManager] Face tracking iteration error: {face_err}")
+                    await asyncio.sleep(0.1)
+
+                await asyncio.sleep(FACE_TRACK_UPDATE_INTERVAL)
+        except asyncio.CancelledError:
+            pass
+
+    async def _recenter_head_step(self) -> None:
+        pose = self.state.head_pose
+        target = self._face_tracking_return_pose
+        yaw_diff = target.yaw - pose.yaw
+        pitch_diff = target.pitch - pose.pitch
+        roll_diff = target.roll - pose.roll
+
+        step_yaw = max(-FACE_TRACK_RECENTER_STEP, min(FACE_TRACK_RECENTER_STEP, yaw_diff))
+        step_pitch = max(-FACE_TRACK_RECENTER_STEP, min(FACE_TRACK_RECENTER_STEP, pitch_diff))
+        step_roll = max(-FACE_TRACK_RECENTER_STEP, min(FACE_TRACK_RECENTER_STEP, roll_diff))
+
+        if abs(step_yaw) < 0.05 and abs(step_pitch) < 0.05 and abs(step_roll) < 0.05:
+            await self._set_head_pose(
+                yaw=target.yaw,
+                pitch=target.pitch,
+                roll=target.roll,
+                update_return=False,
+            )
+        else:
+            await self._adjust_head_pose(
+                delta_yaw=step_yaw,
+                delta_pitch=step_pitch,
+                delta_roll=step_roll,
+                update_return=False,
+            )
+
+    async def close(self):
+        await self._stop_face_tracking()
+        await self.head_controller.stop()
         close_camera()
-        self.perform_action('lie')
+        try:
+            await self.perform_action('lie')
+        except Exception as e:
+            print(f"[ActionManager] Error performing shutdown pose: {e}")
         self.my_dog.close()
         try:
             self.my_dog.sensory_process.stop()
-            sleep(.5)  # Wait for the process to stop
+            time.sleep(.5)  # Wait for the process to stop
         except Exception as e:
             print(f"[ActionManager] Error stopping sensory process: {e}")
 
@@ -107,6 +296,7 @@ class ActionManager:
         self.isPlayingSound = True
         music = self.speak("powerup")
         await self.perform_action('sit,turn_head_forward')
+        await self._sync_head_from_hardware(update_return=True)
         await powerup_lightbar_task  # Wait for the power-up sequence to finish
         # Guard against speak() returning False/None
         try:
@@ -124,8 +314,18 @@ class ActionManager:
         self.isPlayingSound = False
         self.isTakingAction = False
         self.state = RobotDogState()
+        self.state.head_pose = self.head_controller.current_pose()
+        self._face_tracking_people = 0
+        self._face_tracking_last_seen = 0.0
+        self._face_tracking_return_pose = self.state.head_pose.copy()
+        self._face_tracking_active = False
         self.last_change_time = 0  # Track the last time a change was noticed
         self.last_reminder_time = time.time()  # Track the last time we reminded of the default goal
+        # Tuning knobs for environment polling
+        self.face_detection_interval = float(os.environ.get("FACE_DETECTION_INTERVAL", 0.8))
+        self.environment_poll_interval = float(os.environ.get("ENVIRONMENT_POLL_INTERVAL", 0.5))
+        self._last_face_check_time = 0.0
+        self._last_face_log_state = None
 
     def detect_sound_direction(self):
         """Reads the dog's ear sensors to find out from which direction the sound came."""
@@ -199,7 +399,15 @@ class ActionManager:
 
     async def detect_face_change(self):
         """Detects if a face is in front of the dog."""
-        detected = await is_person_detected()
+        now = time.time()
+        if now - getattr(self, "_last_face_check_time", 0.0) < self.face_detection_interval:
+            return False
+        self._last_face_check_time = now
+
+        if self._face_tracking_enabled:
+            detected = self._face_tracking_people > 0
+        else:
+            detected = await is_person_detected()
         # print(f"[DEBUG] Face detected: {detected}")
         retVal = False  # Ensure consistent variable naming
     
@@ -217,8 +425,9 @@ class ActionManager:
                 # print("[DEBUG] No face detected for over 10 seconds.")
                 retVal = True
     
-        if retVal:
+        if retVal or detected != self._last_face_log_state:
             print(f"[DEBUG] Face change detected: {detected}, last face seen at: {self.state.face_detected_at}")
+            self._last_face_log_state = detected
     
         # print(f"[DEBUG] Returning value: {retVal}")
         return retVal
@@ -311,7 +520,7 @@ class ActionManager:
 
         # Report on posture and head position from state
         status_parts.append(f"Posture: {self.state.posture}")
-        status_parts.append(f"Head Position: {self.state.head_position}")
+        status_parts.append(f"Head Pose: {self.state.head_pose.describe()}")
 
         # Battery voltage
         voltage = self.my_dog.get_battery_voltage()
@@ -386,7 +595,7 @@ class ActionManager:
 
     def get_simple_status(self):
         """
-        Gathers basic info about the robot's state, including posture, head position,
+        Gathers basic info about the robot's state, including posture, head pose,
         last sound direction, and time since last face or pet detection.
         Returns them as a formatted string.
         """
@@ -411,9 +620,9 @@ class ActionManager:
         else:
             status_parts.append("No face detected yet.")
 
-        # Posture and Head Position
+        # Posture and Head Pose
         status_parts.append(f"Posture: {self.state.posture}")
-        status_parts.append(f"Head Position: {self.state.head_position}")
+        status_parts.append(f"Head Pose: {self.state.head_pose.describe()}")
 
         # Last Sound Direction
         last_sound = self.state.last_sound_direction if self.state.last_sound_direction else "None detected yet"
@@ -496,41 +705,37 @@ class ActionManager:
                     self.state.posture = "sitting"
                 elif action == 'shake_head':
                     shake_head(self.my_dog)
+                    await self._sync_head_from_hardware(update_return=False)
                 elif action == 'relax_neck':
                     relax_neck(self.my_dog)
+                    await self._sync_head_from_hardware(update_return=False)
                 elif action == 'nod':
                     nod(self.my_dog)
+                    await self._sync_head_from_hardware(update_return=False)
                 elif action == 'think':
                     think(self.my_dog)
+                    await self._sync_head_from_hardware(update_return=True)
                 elif action == 'recall':
                     recall(self.my_dog)
+                    await self._sync_head_from_hardware(update_return=True)
                 elif action == 'turn_head_down':
-                    look_down(self.my_dog, pitch_comp=-20 if self.state.posture == "sitting" else 0)
-                    self.state.head_position = "down"
+                    await self._set_head_pose(pitch=-25.0)
                 elif action == 'turn_head_up':
-                    look_up(self.my_dog, pitch_comp=-20 if self.state.posture == "sitting" else 0)
-                    self.state.head_position = "up"
+                    await self._set_head_pose(pitch=25.0)
                 elif action == 'turn_head_down_left':
-                    head_down_left(self.my_dog, pitch_comp=-20 if self.state.posture == "sitting" else 0)
-                    self.state.head_position = "down left"
+                    await self._set_head_pose(yaw=25.0, pitch=-25.0)
                 elif action == 'turn_head_down_right':
-                    head_down_right(self.my_dog, pitch_comp=-20 if self.state.posture == "sitting" else 0)
-                    self.state.head_position = "down right"
+                    await self._set_head_pose(yaw=-25.0, pitch=-25.0)
                 elif action == 'turn_head_up_left':
-                    head_up_left(self.my_dog, pitch_comp=-20 if self.state.posture == "sitting" else 0)
-                    self.state.head_position = "up left"
+                    await self._set_head_pose(yaw=25.0, pitch=25.0)
                 elif action == 'turn_head_up_right':
-                    head_up_right(self.my_dog, pitch_comp=-20 if self.state.posture == "sitting" else 0)
-                    self.state.head_position = "up right"
+                    await self._set_head_pose(yaw=-25.0, pitch=25.0)
                 elif action == 'turn_head_forward':
-                    look_forward(self.my_dog, pitch_comp=-20 if self.state.posture == "sitting" else 0)
-                    self.state.head_position = "forward"
+                    await self._set_head_pose(yaw=0.0, pitch=0.0, roll=0.0)
                 elif action == 'turn_head_left':
-                    look_left(self.my_dog, pitch_comp=-20 if self.state.posture == "sitting" else 0)
-                    self.state.head_position = "left"
+                    await self._set_head_pose(yaw=60.0)
                 elif action == 'turn_head_right':
-                    look_right(self.my_dog, pitch_comp=-20 if self.state.posture == "sitting" else 0)
-                    self.state.head_position = "right"
+                    await self._set_head_pose(yaw=-60.0)
                 elif action == 'fluster':
                     fluster(self.my_dog)
                 elif action == 'surprise':
@@ -586,8 +791,10 @@ class ActionManager:
                     self.state.posture = "standing"
                 elif action == 'tilt_head_left':
                     tilt_head_left(self.my_dog)
+                    await self._sync_head_from_hardware(update_return=True)
                 elif action == 'tilt_head_right':
                     tilt_head_right(self.my_dog)
+                    await self._sync_head_from_hardware(update_return=True)
                 elif action == 'doze_off':
                     doze_off(self.my_dog, speed=100)
                     self.state.posture = "standing"
@@ -596,37 +803,12 @@ class ActionManager:
 
                 # Apply head pitch compensation if posture changed
                 if old_posture != self.state.posture:
-                    self._apply_posture_head_compensation(old_posture, self.state.posture)
+                    await self._update_posture_bias(old_posture, self.state.posture)
             except Exception as e:
                 print(f"[ActionManager] Error during action '{action}': {e}")
         self.my_dog.wait_all_done()
         self.isTakingAction = False
         print("[ActionManager] Done performing actions.")
-
-    def _apply_posture_head_compensation(self, old_posture: str, new_posture: str):
-        """Maintain perceived head direction when switching between sitting and standing.
-
-        Sitting head actions previously used a -20 pitch compensation. When moving to standing
-        we add +30 to current pitch; when moving into sitting we subtract 30, but only for
-        head positions that were using pitch compensation.
-        """
-        try:
-            if old_posture == new_posture:
-                return
-            compensated_positions = {"forward","up","down","up left","up right","down left","down right"}
-            if self.state.head_position not in compensated_positions:
-                return
-            y, r, p = self.my_dog.head_current_angles
-            if old_posture == "sitting" and new_posture == "standing":
-                target_p = p + 30
-            elif old_posture == "standing" and new_posture == "sitting":
-                target_p = p - 20
-            else:
-                return
-            self.my_dog.head_move_raw([[y, r, target_p]], speed=80)
-            self.my_dog.wait_head_done()
-        except Exception as e:
-            print(f"[ActionManager] Head compensation error: {e}")
 
     def lightbar_breath(self):
         self.my_dog.rgb_strip.set_mode(style="breath", color='pink', bps=0.5)
@@ -755,60 +937,19 @@ class ActionManager:
     
     async def start_talking(self):
         print("[ActionManager] Starting to talk...")
-        # try:
-        #     start_angles = self.my_dog.head_current_angles
-        # except AttributeError as e:
-        #     print(f"[ERROR] Unable to retrieve head angles: {e}")
-        #     start_angles = None
         self.isTalkingMovement = True
-        #self.lightbar_bark()
-        #look_forward(self.my_dog)
-        while self.isTalkingMovement:
-            await talk(self.my_dog)
-            await asyncio.sleep(0.1)
-        #look_forward(self.my_dog)
-        #self.lightbar_breath()
-        #return to start angles
-        # if(start_angles is not None):
-        #     self.my_dog.head_move(start_angles, speed=100)
-        # else:
-        #     # If we can't get the angles, just set it to a default position
-        #     start_angles = [0, 0, 0]
-        #     # Assuming the dog has a head_move method that takes angles
-        # self.my_dog.head_move(start_angles, speed=100)
+        await self.head_controller.enable_talking()
 
     async def stop_talking(self):
         print("[ActionManager] Stop Talking...")
         self.isTalkingMovement = False
+        await self.head_controller.disable_talking()
         self.lightbar_breath()
         self.my_dog.body_stop()
-        await self.reset_head()
-        # Reset the head position to the last known state
+        # Keep head oriented toward current target (face tracking or manual)
 
     async def reset_head(self):
-        # Avoid spamming forward head resets if already forward or unknown
-        if self.state.head_position in (None, "forward"):
-            return
-        if self.state.head_position == "forward":
-            return
-        elif self.state.head_position == "left":
-            await self.perform_action("turn_head_left")
-        elif self.state.head_position == "right":
-            await self.perform_action("turn_head_right")
-        elif self.state.head_position == "up":
-            await self.perform_action("turn_head_up")
-        elif self.state.head_position == "down":
-            await self.perform_action("turn_head_down")
-        elif self.state.head_position == "up left":
-            await self.perform_action("turn_head_up_left")
-        elif self.state.head_position == "up right":
-            await self.perform_action("turn_head_up_right")
-        elif self.state.head_position == "down left":
-            await self.perform_action("turn_head_down_left")
-        elif self.state.head_position == "down right":       
-            await self.perform_action("turn_head_down_right")
-        else:
-            return
+        await self._set_head_pose(yaw=0.0, pitch=0.0, roll=0.0)
 
     def get_available_actions(self):
         """Returns the list of all available actions the robot dog can perform."""
@@ -903,29 +1044,37 @@ class ActionManager:
                     is_change = False
 
                 if is_change and (not self.isTalkingMovement):
-                    new_goal = ""
-                    new_status_update = ""
+                    goal_messages = []
+                    status_messages = []
                     self.last_change_time = current_time  # Update the last change time
                     if petting_changed:
                         if (current_time - self.state.petting_detected_at) < 10:
-                            new_goal = "You are being petted!  You must say and do something in reaction to this."
-                        # else:
-                        #     new_status_update = "You are no longer being petted."
+                            goal_messages.append("You are being petted! You must say and do something in reaction to this.")
                     if sound_changed:
-                        if (audio_manager.latest_volume > 30):
-                            new_status_update = f"Sound (is someone talking?) came from direction: {self.state.last_sound_direction}. If someone is talking you may want to look in that direction before responding."
+                        direction = self.state.last_sound_direction or "an unknown direction"
+                        if audio_manager.latest_volume > 30:
+                            goal_messages.append(
+                                f"A loud sound came from your {direction}. You must react, look that way, and respond."
+                            )
+                        else:
+                            status_messages.append(
+                                f"A quiet sound came from your {direction}."
+                            )
                     if face_changed:
                         if (current_time - self.state.face_detected_at) < 10:
-                            new_goal = f"A face is detected! You are looking {self.state.head_position}. You must say and do something in reaction to this."
-                        # else:
-                        #     new_status_update = f"A face is no longer detected. You are looking {self.state.head_position}"
+                            goal_messages.append(
+                                "A face is detected! You are looking "
+                                f"{self.state.head_pose.describe()}. You must say and do something in reaction to this."
+                            )
                     if orientation_changed:
-                        new_goal = self.state.last_orientation_description
+                        orientation_msg = self.state.last_orientation_description or "Your orientation changed."
+                        goal_messages.append(f"{orientation_msg} You must say and do something in reaction to this.")
 
-                    if(len(new_status_update) > 0):
-                        await client.send_text_message(new_status_update)
+                    if status_messages:
+                        await client.send_text_message(" ".join(status_messages))
 
-                    if(len(new_goal) > 0):
+                    if goal_messages:
+                        new_goal = " ".join(goal_messages)
                         self.state.goal = new_goal
                         print(f"Sending awareness of new (temporary) goal: {new_goal}")
                         display_message("New Goal", new_goal)
@@ -955,7 +1104,7 @@ class ActionManager:
                         self.last_reminder_time = current_time
                         # reminder_interval = random.randint(45, 60)  # Randomize next interval
 
-                await asyncio.sleep(0.3)
+                await asyncio.sleep(self.environment_poll_interval)
                 is_change = False
             except Exception as e:
                 print(f"[ActionManager::detect_status] Error: {e}")

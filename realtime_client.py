@@ -104,19 +104,36 @@ class RealtimeClient:
         """Helper to serialize & send a JSON message to server."""
         message = {"type": event_type}
         message.update(data)
-        if not self.isReceivingAudio or event_type != "response.create":
+        if event_type == "response.create":
+            response_payload = message.get("response")
+            if response_payload is None:
+                response_payload = {}
+                message["response"] = response_payload
+
             # Send immediately if not receiving audio
-            asyncio.create_task(self._send_message(message))
-        else:
-            if len(self.message_queue.queue) > 0 and message['response']['instructions'] == self.message_queue.queue[-1]['response']['instructions']:
+            if not self.isReceivingAudio:
+                asyncio.create_task(self._send_message(message))
+                return
+
+            # Deduplicate buffered instructions when provided
+            last_buffered = None
+            if len(self.message_queue.queue) > 0:
+                last_buffered = self.message_queue.queue[-1].get('response', {})
+            if (
+                last_buffered is not None
+                and "instructions" in response_payload
+                and "instructions" in last_buffered
+                and response_payload["instructions"] == last_buffered["instructions"]
+            ):
                 print(f"[RealtimeClient] Skipping duplicate message: {message}")
             else:
                 print(f"[RealtimeClient] Buffering message: {message}")
                 self.message_queue.put(message)
 
-            # Start a flush task if not already running
             if not self.is_flushing:
                 asyncio.create_task(self._flush_buffer())
+        else:
+            asyncio.create_task(self._send_message(message))
 
     async def _send_message(self, message):
         """Internal helper to send a message asynchronously."""
@@ -252,8 +269,9 @@ class RealtimeClient:
             # Append the current resampled audio to the buffer
             self._audio_buffer.extend(resampled_bytes)
 
+            model_rate = getattr(self.audio_manager, "model_rate", 24000)
             # Calculate the number of bytes corresponding to 10 seconds of audio
-            bytes_per_second = 24000 * 1 * 2  # 2 bytes per sample for paInt16
+            bytes_per_second = model_rate * 1 * 2  # 2 bytes per sample for paInt16
             max_buffer_size = bytes_per_second * 30
 
             # Trim the buffer to keep only the most recent 10 seconds
@@ -268,7 +286,7 @@ class RealtimeClient:
                 with wave.open(f"microphone_{filecount}.wav", "wb") as wf:
                     wf.setnchannels(1)
                     wf.setsampwidth(2)
-                    wf.setframerate(24000)
+                    wf.setframerate(model_rate)
                     wf.writeframes(self._audio_buffer)
                 self._last_save_time = time.monotonic()
                 filecount = filecount + 1
@@ -436,10 +454,12 @@ class RealtimeClient:
             #add admin tools to base tools
             current_tools.extend(admin_tools)
 
+        model_rate = getattr(self.audio_manager, "model_rate", 16000)
+
         session_config = {
             "session": {
-                    # Realtime API now requires explicit session.type
-                    "type": "realtime",
+                # Realtime API now requires explicit session.type
+                "type": "realtime",
                 "instructions": f"""
 # CORE ROLE
 You are K9-PolyVox, a physical robot dog.  
@@ -494,8 +514,15 @@ About once every 3-5 turns, add a short, persona-appropriate **“surprise move�
 Stay in character. Keep replies tight. Actions are your super-power – use them!
 
 """,
-                "audio": {"output": {"voice": self.persona['voice'], "format": {"type": "audio/pcm", "rate": 24000}},
-                          "input": { "format": {"type": "audio/pcm", "rate": 24000}} },
+                "audio": {
+                    "output": {
+                        "voice": self.persona['voice'],
+                        "format": {"type": "audio/pcm", "rate": model_rate}
+                    },
+                    "input": {
+                        "format": {"type": "audio/pcm", "rate": model_rate}
+                    }
+                },
                 # "turn_detection": {
                 #     "type": "semantic_vad",
                 #     # "threshold": 0.3,
