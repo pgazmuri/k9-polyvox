@@ -1,4 +1,5 @@
 from dataclasses import dataclass
+from typing import Optional
 
 
 @dataclass
@@ -22,60 +23,40 @@ class HeadPose:
         )
 
     def describe(self) -> str:
-        """Return a concise textual description plus numeric angles."""
-        yaw_threshold = 12.0
-        pitch_threshold = 10.0
-        roll_threshold = 12.0
+        yaw = self.yaw
+        pitch = self.pitch
+        roll = self.roll
 
-        # Determine yaw direction (left/right)
-        if self.yaw > yaw_threshold:
-            yaw_dir = "left"
-        elif self.yaw < -yaw_threshold:
-            yaw_dir = "right"
+        def _dir(value: float, pos_label: str, neg_label: str, threshold: float = 8.0) -> Optional[str]:
+            if value > threshold:
+                return pos_label
+            if value < -threshold:
+                return neg_label
+            return None
+
+        pitch_dir = _dir(pitch, "up", "down")
+        yaw_dir = _dir(yaw, "to the left", "to the right")
+        components = [c for c in (pitch_dir, yaw_dir) if c]
+        if components:
+            direction_desc = " and ".join(components)
         else:
-            yaw_dir = "forward"
+            direction_desc = "straight ahead"
 
-        # Determine pitch direction (up/down)
-        if self.pitch > pitch_threshold:
-            pitch_dir = "up"
-        elif self.pitch < -pitch_threshold:
-            pitch_dir = "down"
-        else:
-            pitch_dir = "level"
+        roll_desc = _dir(roll, "tilted toward the left ear", "tilted toward the right ear")
+        orientation_parts = [f"looking {direction_desc}"]
+        if roll_desc:
+            orientation_parts.append(roll_desc)
+        orientation = "; ".join(orientation_parts)
 
-        # Build combined facing string
-        if yaw_dir == "forward" and pitch_dir == "level":
-            direction = "forward"
-        elif yaw_dir == "forward":
-            direction = pitch_dir
-        elif pitch_dir == "level":
-            direction = yaw_dir
-        else:
-            direction = f"{pitch_dir}-{yaw_dir}"
-
-        # Note roll if beyond threshold
-        roll_note = ""
-        if self.roll > roll_threshold:
-            roll_note = " (tilted left)"
-        elif self.roll < -roll_threshold:
-            roll_note = " (tilted right)"
-
-        return (f"direction={direction}{roll_note} | "
-                f"yaw={self.yaw:.1f}°, pitch={self.pitch:.1f}°, roll={self.roll:.1f}°")
+        return (
+            f"yaw={yaw:.1f}°, pitch={pitch:.1f}°, roll={roll:.1f}° "
+            f"({orientation})"
+        )
 
 
 class RobotDogState:
     def __init__(self):
-        # State attributes
-        self.volume = 1  # Volume level (0-3)
-        self.face_detected_at = None  # Timestamp of the last detected face
-        self.petting_detected_at = None  # Timestamp of the last pet
-        self.last_sound_direction = None  # Direction of the last detected sound
-        self.last_orientation_description = None  # Description of the last detected position
-        self.goal = "You just woke up"
-        self.last_awareness_event_time = None  # Timestamp of the last awareness event
-        self.posture = "sitting"  # sitting | standing
-        self.head_pose = HeadPose()
+        self.reset()
 
     def __str__(self):
         return (f"State:\n"
@@ -84,3 +65,18 @@ class RobotDogState:
                 f"  Face Detected At: {self.face_detected_at}\n"
                 f"  Last Sound Direction: {self.last_sound_direction}\n"
                 f"  Head Pose: {self.head_pose.describe()}")
+
+    def reset(self) -> None:
+        self.volume = 1
+        self.face_detected_at = None
+        self.petting_detected_at = None
+        self.is_being_petted = False
+        self.last_sound_direction = None
+        self.last_orientation_description = None
+        self.goal = "You just woke up"
+        self.last_awareness_event_time = None
+        self.posture = "sitting"
+        self.head_pose = HeadPose()
+        self.face_present = False
+        self.face_last_seen_at = None
+        self.pending_stimulus = None

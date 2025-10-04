@@ -1,98 +1,139 @@
-import json
 import asyncio
-from queue import Queue
-import time
-import wave
-import numpy as np
-import pyaudio
-import resampy
-import websockets
 import base64
-from system_prompts import personas 
-from function_call_manager import get_base_tools, admin_tools
+import json
+import os
+import time
+from dataclasses import dataclass
+from typing import Any, Callable, Dict, List, Optional
+
+from agents.realtime.agent import RealtimeAgent  # type: ignore[import-not-found]
+from agents.realtime.config import RealtimeRunConfig, RealtimeSessionModelSettings  # type: ignore[import-not-found]
+from agents.realtime.events import (  # type: ignore[import-not-found]
+    RealtimeAgentStartEvent,
+    RealtimeAudio,
+    RealtimeAudioEnd,
+    RealtimeAudioInterrupted,
+    RealtimeError,
+    RealtimeHistoryAdded,
+    RealtimeHistoryUpdated,
+    RealtimeSessionEvent,
+)
+from agents.realtime.model import RealtimeModelConfig  # type: ignore[import-not-found]
+from agents.realtime.runner import RealtimeRunner  # type: ignore[import-not-found]
+from agents.realtime.session import RealtimeSession  # type: ignore[import-not-found]
+from agents.tool import FunctionTool  # type: ignore[import-not-found]
+
+from function_call_manager import admin_tools, get_base_tools
+from system_prompts import personas
+from prompt_builder import build_persona_instructions
+from tool_builder import build_function_tools, extract_api_key
+
+
+@dataclass
+class _QueuedAction:
+    name: str
+    enqueued_at: float
+    source: str = "perform_action"
+    action_id: str = ""
+
 
 class RealtimeClient:
-    """
-    Handles the connection to the GPT model: 
-    - open/close websockets
-    - send requests (session updates, input audio, function call results)
-    - receive events from the server
-    """
+    """Realtime client powered by the OpenAI Agents SDK."""
 
-    def __init__(self, 
-                 ws_url, 
-                 model, 
-                 headers,
-                 function_call_manager,
-                 audio_manager,
-                 action_manager):
+    def __init__(
+        self,
+        ws_url: str,
+        model: str,
+        headers: Optional[Dict[str, str]],
+        function_call_manager,
+        audio_manager,
+        action_manager,
+    ) -> None:
         self.ws_url = ws_url
         self.model = model
-        self.headers = headers
+        self.headers = headers or {}
 
         self.function_call_manager = function_call_manager
         self.audio_manager = audio_manager
         self.action_manager = action_manager
+
         self.is_shutdown = False
+        self.runner: Optional[RealtimeRunner] = None
+        self.session: Optional[RealtimeSession] = None
+        self._event_task: Optional[asyncio.Task] = None
+        self._outgoing_audio_task: Optional[asyncio.Task] = None
+        self._action_worker_task: Optional[asyncio.Task] = None
 
-        self._receive_task = None
-        self._function_calls_task = None
-        self._outgoing_audio_task = None
-
-        self.ws = None
-        self.function_call_queue = asyncio.Queue()
-
-        # Let's you track whether GPT is currently speaking
+        # Conversation state
         self.isReceivingAudio = False
         self.isDetectingUserSpeech = False
-        self.message_queue = Queue()  # Buffer to store unique messages
-        self.is_flushing = False  # To prevent overlapping flush tasks
+        self._available_actions_cache: List[str] = []
 
+        self._queued_actions: "asyncio.Queue[_QueuedAction]" = asyncio.Queue()
+        self._current_action_task: Optional[asyncio.Task] = None
+        self._audio_idle_event = asyncio.Event()
+        self._audio_idle_event.set()
+        self._action_completion_events: Dict[str, asyncio.Event] = {}  # Track action completions
 
-    async def connect(self):
-        """Open a websocket connection to GPT and start listening."""
-        self.is_shutdown = False
-        print("[RealtimeClient] Connecting...")
-        self.ws = await websockets.connect(
-            f"{self.ws_url}?model={self.model}", 
-            additional_headers=self.headers
+        self.persona = None
+        self.first_response_event = asyncio.Event()
+        self._touch_activity()  # Initialize all timestamps
+        
+        # Response state tracking to prevent race conditions
+        self._response_active = False
+        self._pending_awareness_request = None
+        self._last_awareness_time = 0
+        self._awareness_debounce = 1.5  # seconds - increased to prevent race conditions
+
+        # SDK configuration
+        self._api_key = extract_api_key(self.headers)
+        self._bootstrap_agent = RealtimeAgent(
+            name="bootstrap",
+            instructions="",  # Empty to prevent automatic responses
+            tools=[],
         )
-        print("[RealtimeClient] Connected to Realtime API")
-        self._receive_task = asyncio.create_task(self.receive()) # Start the receive loop
-        # 4. Start processing function calls and audio from GPT
-        self._function_calls_task = asyncio.create_task(self.process_function_calls())
-        self._outgoing_audio_task = asyncio.create_task(self.process_outgoing_audio())
-        
-    async def send_awareness(self):
-        
-        print("[RealtimeClient] Sending awareness status...")
-        await self.send("response.create", {
-            "response": {
-                "instructions": "get_awareness_status",
-                "tool_choice": "required"
+        # Common audio settings used in both run config and session updates
+        self._audio_settings = {
+            "input_audio_noise_reduction": {"type": "far_field"},
+            # "turn_detection": {
+            #     "type": "semantic_vad",
+            #     "eagerness": "high",
+            #     "interrupt_response": True
+            # }
+            "turn_detection": {
+                "type": "server_vad"
             }
-        })
-        self.action_manager.state.last_awareness_event_time = time.time()
-
-    async def force_response(self, instructions="respond to what is going on"):
-        
-        print("[RealtimeClient] Forcing a response...")
-        await self.send("response.create", {
-            "response": {
-                "instructions": instructions,
-                "tool_choice": "auto"
+        }
+        self._run_config: RealtimeRunConfig = {
+            "model_settings": {
+                "model_name": self.model,
+                "modalities": ["audio"],
+                "input_audio_format": "pcm16",
+                "output_audio_format": "pcm16",
+                "tool_choice": "auto",
+                **self._audio_settings
             }
-        })
+        }
 
-    async def close(self):
-        """Close the active websocket connection."""
+                # No longer need session_handlers dictionary - handle events directly
+
+    # ------------------------------------------------------------------
+    # Connection lifecycle
+    # ------------------------------------------------------------------
+
+    # ------------------------------------------------------------------
+    # Connection lifecycle
+    # ------------------------------------------------------------------
+
+    async def close(self) -> None:
+        """Close the realtime session and stop all background tasks."""
         self.is_shutdown = True
-        if self.ws:
-            await self.ws.close()
-            print("[RealtimeClient] WebSocket closed.")
-        
-        # Cancel and await all background tasks
-        for task in [self._receive_task, self._function_calls_task, self._outgoing_audio_task]:
+
+        await self._cancel_current_action(reason="shutdown")
+        await self._drain_action_queue(reason="shutdown")
+        self._audio_idle_event.set()
+
+        for task in (self._event_task, self._outgoing_audio_task, self._action_worker_task):
             if task and not task.done():
                 task.cancel()
                 try:
@@ -100,445 +141,62 @@ class RealtimeClient:
                 except asyncio.CancelledError:
                     pass
 
-    async def send(self, event_type, data):
-        """Helper to serialize & send a JSON message to server."""
-        message = {"type": event_type}
-        message.update(data)
-        if event_type == "response.create":
-            response_payload = message.get("response")
-            if response_payload is None:
-                response_payload = {}
-                message["response"] = response_payload
+        self._event_task = None
+        self._outgoing_audio_task = None
+        self._action_worker_task = None
+        self._current_action_task = None
 
-            # Send immediately if not receiving audio
-            if not self.isReceivingAudio:
-                asyncio.create_task(self._send_message(message))
-                return
+        if self.session:
+            await self.session.close()
+            self.session = None
 
-            # Deduplicate buffered instructions when provided
-            last_buffered = None
-            if len(self.message_queue.queue) > 0:
-                last_buffered = self.message_queue.queue[-1].get('response', {})
-            if (
-                last_buffered is not None
-                and "instructions" in response_payload
-                and "instructions" in last_buffered
-                and response_payload["instructions"] == last_buffered["instructions"]
-            ):
-                print(f"[RealtimeClient] Skipping duplicate message: {message}")
-            else:
-                print(f"[RealtimeClient] Buffering message: {message}")
-                self.message_queue.put(message)
+        print("[RealtimeClient] Session closed.")
 
-            if not self.is_flushing:
-                asyncio.create_task(self._flush_buffer())
-        else:
-            asyncio.create_task(self._send_message(message))
+    async def update_session(self, persona: str = "Vektor Pulsecheck") -> None:
+        """Send persona-specific instructions and tools to the model."""
+        if not self.function_call_manager:
+            raise RuntimeError("FunctionCallManager not configured before update_session.")
+        if not self.session:
+            raise RuntimeError("Realtime session is not connected.")
 
-    async def _send_message(self, message):
-        """Internal helper to send a message asynchronously."""
-        try:
-            await self.ws.send(json.dumps(message))
-        except Exception as e:
-            print(f"[RealtimeClient] Error sending message: {e}")
-
-    async def _flush_buffer(self):
-        """Flush the message buffer and send all unique messages."""
-        self.is_flushing = True
-        try:
-            while not self.message_queue.empty():
-                message = self.message_queue.get()
-                print(f"[RealtimeClient] Sending buffered message: {message}")
-                # message already a dict; previous code attempted json.loads causing errors & dropped messages
-                asyncio.create_task(self._send_message(message))
-                await asyncio.sleep(0.01)  # Small delay to avoid overwhelming the server
-        except Exception as e:
-            print(f"[RealtimeClient] Error flushing buffer: {e}")
-        finally:
-            self.is_flushing = False
-
-    async def receive(self):
-        """
-        Continuously read messages from GPT in a loop,
-        handle them or route them to the function_call queue.
-        """
-        print("[RealtimeClient] Listening for messages...")
-        try:
-            async for message in self.ws:
-                try:
-                    response = json.loads(message)
-                    msg_type = response.get('type')
-                    
-                    # Unified handling for audio output chunks
-                    if msg_type == 'response.output_audio.delta' and response.get('delta'):
-                        # Audio chunk (mark start sooner for reduced perceived latency)
-                        if not self.isReceivingAudio:
-                            self.isReceivingAudio = True
-                            # Latency instrumentation: time from last user audio chunk to first model audio
-                            if hasattr(self.audio_manager, 'last_user_audio_chunk_time'):
-                                gap_ms = (time.time() - self.audio_manager.last_user_audio_chunk_time) * 1000
-                                print(f"[LAT] user->first_model_audio: {gap_ms:.1f} ms")
-                            # Kick off talking movement once when audio starts
-                            if not self.action_manager.isTalkingMovement:
-                                asyncio.create_task(self.action_manager.start_talking())
-                        audio_chunk = base64.b64decode(response['delta'])
-                        self.audio_manager.queue_audio(audio_chunk)
-                    
-                    elif msg_type in ('response.output_item.added', 'conversation.item.added'):
-                        # Clear audio buffer when a new assistant message response starts
-                        item = response.get('item', {})
-                        # Older response.* events used output_index/item/type structure; keep guard flexible
-                        if (response.get('output_index') == 0 and item.get('type') == 'message') or item.get('role') == 'assistant':
-                            print(f"[RealtimeClient] New item added {response.get('event_id','?')} - clearing audio buffer...")
-                            try:
-                                self.audio_manager.clear_audio_buffer()
-                            except Exception as e:
-                                print(f"[RealtimeClient] Error clearing audio buffer: {e}")
-
-                    elif msg_type in ('response.output_item.done', 'conversation.item.done'):
-                        # Placeholder: could finalize any in-progress item assembly
-                        pass
-                        
-                    elif msg_type == 'response.output_audio_transcript.delta':
-                        # Partial transcript while GPT is speaking
-                        self.isReceivingAudio = True
-                        print(response['delta'], end='')
-                    elif msg_type == 'response.audio.done':
-                        # GPT finished speaking
-                        if self.action_manager.isTalkingMovement:
-                            asyncio.create_task(self.action_manager.stop_talking())
-                        self.isReceivingAudio = False
-                        print("\n[RealtimeClient] Audio response completed.")
-
-                    elif msg_type == 'response.output_text.delta' and response.get('delta'):
-                        # GPT text output
-                        print(f"Assistant: {response['delta']}")
-                    
-                    # elif msg_type == 'response.done':
-                        # GPT text output
-                        #print(f"Assistant: {response}")
-                        
-
-                    elif msg_type == 'response.function_call_arguments.done':  # unchanged in GA per notes
-                        # GPT wants to call a function with these arguments
-                        self.function_call_queue.put_nowait(response)
-
-                    elif msg_type =='input_audio_buffer.speech_started':
-                        # GPT has started listening
-                        print("[RealtimeClient] GPT noticed someone is talking, and GPT is listening...")
-                        self.isDetectingUserSpeech = True
-                        #clear audio buffer
-                        self.audio_manager.clear_audio_buffer()
-
-                    elif msg_type =='input_audio_buffer.speech_stopped':
-                        # User finished speaking; do NOT clear incoming audio here.
-                        # Clearing now risks dropping early model audio chunks that race in right after VAD end.
-                        print("[RealtimeClient] GPT noticed someone stopped talking...")
-                        self.isDetectingUserSpeech = False
-                    
-                    elif msg_type == 'error':
-                        print(f"[RealtimeClient] Error response: {response}")
-
-
-                    # else:
-                    #     # Handle other message types
-                    #     print(f"[RealtimeClient] Unknown message type: {msg_type}")
-                    #     print(f"[RealtimeClient] Message content: {response}")
-
-                except Exception as e:
-                    if response.get('delta'):
-                        # Handle audio chunk decoding errors separately
-                        response.set('delta', '[REDACTED FOR VERBOSITY]')
-                    print(f"[RealtimeClient] Error parsing response from Realtime API: {e} | Message: {response}")
-        except asyncio.CancelledError:
-            print("[RealtimeClient] Receive loop cancelled.")
-            raise
-        except websockets.exceptions.ConnectionClosedError as e:
-            print(f"[RealtimeClient] Connection closed: {e}")
-        except Exception as e:
-            print(f"[RealtimeClient] Receive loop exception: {e}")
-
-    def save_microphone_audio(self, resampled_bytes):
-        # # Buffer audio and save the most recent 10 seconds to a file
-        filecount=0
-        try:
-            # Initialize a buffer if it doesn't exist
-            if not hasattr(self, "_audio_buffer"):
-                self._audio_buffer = bytearray()
-
-            # Append the current resampled audio to the buffer
-            self._audio_buffer.extend(resampled_bytes)
-
-            model_rate = getattr(self.audio_manager, "model_rate", 24000)
-            # Calculate the number of bytes corresponding to 10 seconds of audio
-            bytes_per_second = model_rate * 1 * 2  # 2 bytes per sample for paInt16
-            max_buffer_size = bytes_per_second * 30
-
-            # Trim the buffer to keep only the most recent 10 seconds
-            if len(self._audio_buffer) > max_buffer_size:
-                self._audio_buffer = self._audio_buffer[-max_buffer_size:]
-
-            # Save the buffered audio to a file every 10 seconds
-            if not hasattr(self, "_last_save_time"):
-                self._last_save_time = time.monotonic()
-
-            if time.monotonic() - self._last_save_time >= 30:
-                with wave.open(f"microphone_{filecount}.wav", "wb") as wf:
-                    wf.setnchannels(1)
-                    wf.setsampwidth(2)
-                    wf.setframerate(model_rate)
-                    wf.writeframes(self._audio_buffer)
-                self._last_save_time = time.monotonic()
-                filecount = filecount + 1
-        except Exception as save_error:
-            print(f"[AudioManager] Error saving audio: {save_error}")
-
-    async def process_outgoing_audio(self):
-        """
-        Continuously process audio data from the AudioManager's outgoing queue.
-        Uses proper async await patterns for processing.
-        """
-        print("[RealtimeClient] Starting outgoing audio processing...")
-        while not self.is_shutdown:
-            try:
-                # Use await with a timeout to avoid blocking indefinitely
-                try:
-                    # Try to get an item with a short timeout
-                    resampled_bytes = await asyncio.wait_for(
-                        self.audio_manager.outgoing_data_queue.get(), 
-                        timeout=0.01
-                    )
-                    
-                    # Audio is already resampled in AudioManager, so we just need to encode it
-                    # Base64 encode the audio
-                    chunk_base64 = await asyncio.to_thread(
-                        lambda: base64.b64encode(resampled_bytes).decode('utf-8')
-                    )
-                    
-                    # Send the chunk to the server
-                    await self.send("input_audio_buffer.append", {"audio": chunk_base64})
-                    
-                    # Optional: Indicate task completion
-                    self.audio_manager.outgoing_data_queue.task_done()
-                    
-                    # Optional: Save microphone audio for debugging
-                    # self.save_microphone_audio(resampled_bytes)
-                    
-                except asyncio.TimeoutError:
-                    # No data available, just continue the loop
-                    pass
-                    
-                # Yield control back to the event loop
-                await asyncio.sleep(0)
-            except Exception as e:
-                print(f"[RealtimeClient] Error in process_outgoing_audio: {e}")
-                await asyncio.sleep(1)  # Wait before retrying after an error
-
-    async def process_function_calls(self):
-        """
-        Continuously poll function_call_queue for new requests
-        and dispatch them via FunctionCallManager.
-        """
-        while not self.is_shutdown:
-            try:
-                if not self.function_call_queue.empty():
-                    function_call = await self.function_call_queue.get()
-                    result = await self.function_call_manager.handle_function_call(function_call)
-                    await self.send_function_call_result(function_call, result)
-                else:
-                    # Removed auto start_talking here; now tied to first audio chunk to avoid rapid loop
-                    pass
-
-            except Exception as e:
-                print(f"[RealtimeClient] Error in process_function_calls: {e}")
-            # Poll faster to reduce tool call latency
-            await asyncio.sleep(0.02)
-
-    async def send_function_call_result(self, function_call, result):
-        """
-        Format a function_call_output message with the result 
-        and send it back to GPT so it knows the function call completed.
-        """
-        output = {
-            "name": function_call['name'],
-            "result": result,
-            "event_id": function_call['event_id'],
-            "call_id": function_call['call_id']
-        }
-        await self.send("conversation.item.create", {
-            "item": {
-                "type": "function_call_output",
-                "call_id": function_call['call_id'],
-                "output": str(output)
-            }
-        })
-        # This is usually expected after a function call output, when getting the awareness status we only want to trigger audio and an action
-        # as sometimes the dog would call change_persona or whatever in reponse to some goal or status...
-        if function_call['name'] == "get_awareness_status":
-            await self.send("response.create", {
-                "response": {
-                    "tool_choice": "none"
-                }})
-        else:
-            await self.send("response.create", {})
-
-    async def send_text_message(self, text):
-        """
-        Send a text message to the server.
-        """
-        await self.send("conversation.item.create", {
-            "item": {
-                "type": "message",
-                "role": "assistant",
-                "content": [
-                    {
-                        "type": "text",
-                        "text": text,
-                    }
-                ]
-            }
-        })
-
-    async def send_image_and_request_response(self, image_path: str):
-        """Send an input image (captured locally) to the conversation then request a model response.
-
-        This follows the new realtime API pattern:
-          1. conversation.item.create (message with content type 'input_image')
-          2. response.create (to have the model respond)
-        """
-        try:
-            with open(image_path, 'rb') as f:
-                img_bytes = f.read()
-            b64_image = base64.b64encode(img_bytes).decode('utf-8')
-            await self.send("conversation.item.create", {
-                "item": {
-                    "type": "message",
-                    "role": "user",
-                    "content": [
-                        {
-                            "type": "input_image",
-                            "image_url": f"data:image/jpeg;base64,{b64_image}"
-                        }
-                    ]
-                }
-            })
-            # Now request a response (no extra instructions so persona/instructions drive behavior)
-            await self.send("response.create", {"response": {}})
-        except Exception as e:
-            print(f"[RealtimeClient] Error sending image: {e}")
-        
-
-    async def update_session(self, persona="Vektor Pulsecheck"):
-        """
-        Tells GPT about how we want to handle input/output, instructions, tools, etc.
-        """
         character_by_name = {char["name"]: char for char in personas}
+        if persona not in character_by_name:
+            raise ValueError(f"Unknown persona '{persona}'")
+
         self.persona = character_by_name[persona]
-        
-        # Get available actions from action manager
+
         available_actions = self.action_manager.get_available_actions()
-        
-        # Create persona list with descriptions for the prompt
-        persona_descriptions = []
-        for p in personas:
-            persona_descriptions.append(f"- {p['name']}: {p['description']}")
-        
-        # Pre-format strings to avoid issues with backslashes inside f-string expressions
-        persona_list_str = "\n".join(persona_descriptions)
-        available_actions_str = json.dumps(available_actions)
+        self._available_actions_cache = list(available_actions)
+        instructions = build_persona_instructions(self.persona, available_actions, personas)
+        tools = build_function_tools(
+            self.function_call_manager,
+            self.persona["name"],
+            available_actions,
+            personas,
+            get_base_tools,
+            admin_tools
+        )
 
-        # Conditionally add the shut_down tool for the specific persona
-        base_tools = get_base_tools(personas, available_actions)
-        current_tools = base_tools[:] # Create a copy
-        if self.persona['name'] == "Vektor Pulsecheck":
-            #add admin tools to base tools
-            current_tools.extend(admin_tools)
-
-        model_rate = getattr(self.audio_manager, "model_rate", 16000)
-
-        session_config = {
-            "session": {
-                # Realtime API now requires explicit session.type
-                "type": "realtime",
-                "instructions": f"""
-# CORE ROLE
-You are K9-PolyVox, a physical robot dog.  
-You express yourself with **speech** *and* by invoking the `perform_action` function (often).
-
-# ACTIVE PERSONA
-Adopt the persona below **fully** – vocabulary, tone, quirks, motivations, everything.  
---- START PERSONA ---
-{self.persona['prompt']}
---- END PERSONA ---
-
-# OTHER PERSONAS
-You may *only* call `switch_persona` (or `create_new_persona`) when the user explicitly asks.  
-Available: {persona_list_str}
-
-# YOUR ROBOTIC ACTIONS
-Perform robotic actions aggressively to bring the persona to life.
-
-• **Available actions:** {available_actions_str}  
-• Multiple actions *at the same time* are comma-separated: `"walk_forward,wag_tail"`  
-• Multiple robotic actions *in a row* require you to invoke 'perform_Action' for each action: e.g. `perform_action(push_up)` followed by `bark` … 
-• To speak while performing a robotic action, speak first, then perform the action. Foe example: Say `Hello There!` then perform_action `wag_tail,handshake`.
-• Use **`nod`** for yes / **`shake_head`** for no.
-
-# VISION
-Use look_and_see to see whatever is in front of where your head is pointing.  To scan an area, turn head up left -> look_and_see -> turn head up forward -> look_and_see -> turn head up right -> look_and_see
-To patrol with vision, scan the area and walk in an appropriate direction, then scan the area and walk in an appropriate direction, etc... over and over until you are told to stop.
-When asked to roast the person in front of you, turn_head_up -> look_and_see, and then roast them ruthlessly (unless out of character for your persona).
-When asked to look left, right, up, down, or center, turn your head in that direction and then look_and_see.
-
-## Action Cadence Rules 
-1. When responding, always speak before performing actions and **Every response should contain at least one action** unless silence is requested.  
-2. Alternate *speech ↔ action* like a stage play:  
-   - Say a line ➜ then call function perform_action ➜ Say a line ➜ then call function perform_action …  etc.
-3. When the user asks for a “show,” “workout,” “patrol,” etc., escalate to **8 perform_action bursts** interleaved with short lines of dialogue.  
-4. Randomize combinations: 20-30 % of the time chain **2-3 actions** in one call for flair.  
-5. Inject occasional *improvised* flourishes (stretch, tilt_head, bark) that fit the persona.
-
-# INTERACTION STYLE
-- BIG personality, concise words. Let motion carry emotion.  
-- Creative re-use of actions is encouraged (e.g., `high_five` as a wave or salute, `stretch` as bow).  
-- Use `look_and_see` when visual input helps (e.g., “look here” “what do you see?” “roast me”).  
-- Call `get_awareness_status` at wake-up or when context seems stale.  
-- Handle jokes, trivia, math, etc., **in-character**.
-
-# SURPRISE FACTOR
-About once every 3-5 turns, add a short, persona-appropriate **“surprise move”**:  
-• an unexpected dance combo,  
-• a dramatic pause *without* speaking but with an action sequence,  
-
-# IMPORTANT
-Stay in character. Keep replies tight. Actions are your super-power – use them!
-
-""",
-                "audio": {
-                    "output": {
-                        "voice": self.persona['voice'],
-                        "format": {"type": "audio/pcm", "rate": model_rate}
-                    },
-                    "input": {
-                        "format": {"type": "audio/pcm", "rate": model_rate}
-                    }
-                },
-                # "turn_detection": {
-                #     "type": "semantic_vad",
-                #     # "threshold": 0.3,
-                #     # "prefix_padding_ms": 300,
-                #     # "silence_duration_ms": 500,
-                # },
-                "tool_choice": "auto",
-                "tools": current_tools
-            }
+        session_settings: RealtimeSessionModelSettings = {
+            "voice": self.persona["voice"],
+            "tool_choice": "auto",
+            **self._audio_settings
         }
-        await self.send("session.update", session_config)
 
-    async def reconnect(self, persona, persona_object=None):
-        """
-        For persona switching or forcibly re-establishing the connection.
-        """
+        # Update model settings FIRST to avoid triggering automatic response
+        self.session._base_model_settings = session_settings
+        
+        agent = RealtimeAgent(
+            name=self.persona["name"],
+            instructions=instructions,
+            tools=tools
+        )
+        await self.session.update_agent(agent)
+
+        print(f"[RealtimeClient] Session updated for persona '{persona}' with voice '{self.persona['voice']}'.")
+
+    async def reconnect(self, persona: str, persona_object: Optional[Dict[str, Any]] = None) -> None:
+        """Tear down and re-establish the realtime connection, optionally adding a persona."""
         try:
             await self.close()
             self.audio_manager.stop_streams()
@@ -546,46 +204,534 @@ Stay in character. Keep replies tight. Actions are your super-power – use them
             await self.connect()
             self.audio_manager.start_streams()
 
-            if persona_object is not None:
-                # Check if a persona with the same name already exists
-                existing_persona = next((p for p in personas if p["name"] == persona_object["name"]), None)
-                if existing_persona:
-                    # Update the existing persona
-                    existing_persona.update(persona_object)
-                else:
-                    # Append the new persona
-                    personas.append(persona_object)
+            if persona_object and (existing := next((p for p in personas if p["name"] == persona_object["name"]), None)):
+                existing.update(persona_object)
+            elif persona_object:
+                personas.append(persona_object)
 
             await self.update_session(persona)
             await self.send_awareness()
-        except Exception as e:
-            print(f"[RealtimeClient] Error in reconnect: {e}")
+        except Exception as exc:
+            print(f"[RealtimeClient] Error in reconnect: {exc}")
 
-    async def make_out_of_band_request(self, request, topic="self_motivation"):
-        """
-        Make an out-of-band request to the server.
-        """
+    # ------------------------------------------------------------------
+    # Messaging helpers
+    # ------------------------------------------------------------------
+    @property
+    def has_active_response(self) -> bool:
+        """Backward compatibility property for action_manager."""
+        return self._response_active
+    
+    async def send_awareness(self) -> None:
+        """Request initial awareness status when waking up."""
+        # Debounce: Don't send if recently sent
+        now = time.time()
+        if now - self._last_awareness_time < self._awareness_debounce:
+            print("[RealtimeClient] Debouncing awareness request (too soon)")
+            return
+            
+        # Don't send if response is active - queue instead
+        if self._response_active:
+            print("[RealtimeClient] Response active, queueing awareness request")
+            self._pending_awareness_request = now
+            return
+        
+        await self._do_send_awareness()
+    
+    async def _do_send_awareness(self) -> None:
+        """Actually send the awareness request."""
+        if not self.session:
+            return
+        await asyncio.sleep(0.1)  # Brief delay to ensure session update is complete
+        print("[RealtimeClient] Sending awareness wake-up request...")
+        await self.send_text_message("Please call get_awareness_status to get your current status.", role="user")
+        self.action_manager.state.last_awareness_event_time = time.time()
+        self._last_awareness_time = time.time()
+
+    async def force_response(self, instructions: str = "Respond out loud to what just happened.") -> None:
+        """Inject stimulus via awareness status and trigger response."""
+        if not self.action_manager or not self.action_manager.state:
+            return
+            
+        # Store the stimulus in the state so get_awareness_status will return it
+        self.action_manager.state.pending_stimulus = instructions
+        print(f"[RealtimeClient] Forcing response with stimulus: {instructions}")
+        
+        await self.send_awareness()
+
+    async def make_out_of_band_request(self, request: str, topic: str = "self_motivation") -> None:
+        """Send a request message to the agent."""
+        print(f"[RealtimeClient] Making out-of-band request: {request}")
+        await self.send_text_message(request, role="user")
+
+    async def send_text_message(self, text: str, *, role: str = "user") -> None:
+        """Send a text message to the session."""
+        if not self.session:
+            raise RuntimeError("Cannot send message: session not connected")
+        
         try:
-            print(f"[RealtimeClient] Making out-of-band request: {request}")
-            await self.send("response.create", {
-                "response":{
-                    "conversation": "none",
-                    "metadata": {"topic": topic},
-                    "input": [
-                        {
-                            "type": "message",
-                            "role": "user",
-                            "content": [
-                                {
-                                    "type": "input_text",
-                                    "text": request
-                                }
-                            ]
-                        }
-                    ],
-                    "tool_choice":"none"
-                }
+            print(f"[RealtimeClient] Sending {role} message: {text}")
+            await self.session.send_message({
+                "type": "message",
+                "role": role,
+                "content": [{"type": "input_text", "text": text or ""}],
             })
-        except Exception as e:
-            # Removed unsupported response.modalities (modalities defined at session level)
-            print(f"[RealtimeClient] Error in make_out_of_band_request: {e}")
+        except Exception as exc:
+            print(f"[RealtimeClient] Error sending message: {exc}")
+            if "Not connected" in str(exc) or "not connected" in str(exc).lower():
+                self.session = None  # Mark as disconnected
+            raise
+
+    async def send_image_and_request_response(self, image_path: str) -> None:
+        """Send an image to the session."""
+        if not self.session:
+            return
+        try:
+            with open(image_path, "rb") as f:
+                b64_image = base64.b64encode(f.read()).decode("utf-8")
+            await self.session.send_message({
+                "type": "message",
+                "role": "user",
+                "content": [{"type": "input_image", "image_url": f"data:image/jpeg;base64,{b64_image}"}],
+            })
+        except Exception as exc:
+            print(f"[RealtimeClient] Error sending image: {exc}")
+
+    async def wait_for_first_response(self, timeout: Optional[float] = None) -> None:
+        """Wait for the first response from the model."""
+        if not self.first_response_event.is_set():
+            await asyncio.wait_for(self.first_response_event.wait(), timeout) if timeout else await self.first_response_event.wait()
+
+    # ------------------------------------------------------------------
+    # Connection lifecycle
+    # ------------------------------------------------------------------
+
+    async def connect(self) -> None:
+        """Establish the realtime session and start background tasks."""
+        self.is_shutdown = False
+        print("[RealtimeClient] Connecting via OpenAI Agents SDK...")
+
+        self.runner = RealtimeRunner(
+            starting_agent=self._bootstrap_agent,
+            config=self._run_config,
+        )
+
+        model_config: RealtimeModelConfig = {}
+        if self._api_key:
+            model_config["api_key"] = self._api_key
+        if self.headers:
+            model_config["headers"] = self.headers
+        if self.ws_url:
+            model_config["url"] = f"{self.ws_url}?model={self.model}"
+
+        self.session = await self.runner.run(model_config=model_config)
+        await self.session.__aenter__()
+        print("[RealtimeClient] Connected to realtime session.")
+
+        self._event_task = asyncio.create_task(self._dispatch_session_events())
+        self._outgoing_audio_task = asyncio.create_task(self.process_outgoing_audio())
+        self._audio_idle_event.set()
+        self._action_worker_task = asyncio.create_task(self._run_action_worker())
+
+    async def _dispatch_session_events(self) -> None:
+        if not self.session:
+            return
+        print("[RealtimeClient] Listening for session events...")
+        try:
+            async for event in self.session:
+                try:
+                    await self._handle_session_event(event)
+                except Exception as event_exc:
+                    error_msg = str(event_exc)
+                    print(f"[RealtimeClient] Error handling event {getattr(event, 'type', 'unknown')}: {event_exc}")
+                    
+                    # Handle tool-not-found errors gracefully (shouldn't happen with fallback tools, but defensive)
+                    if "not found" in error_msg.lower() and "tool" in error_msg.lower():
+                        print("[RealtimeClient] Tool not found - this shouldn't happen with fallback tools installed")
+                        # Send a corrective message to the model
+                        try:
+                            await self.send_text_message(
+                                "Error: You tried to call an action directly as a tool. All robotic actions must use the perform_action tool. "
+                                "For example: perform_action(action_name='turn_head_forward') instead of calling turn_head_forward() directly.",
+                                role="user"
+                            )
+                        except Exception:
+                            pass  # Don't cascade errors
+                    # Don't let individual event errors stop the event loop
+        except asyncio.CancelledError:
+            print("[RealtimeClient] Event loop cancelled.")
+            raise  # Re-raise cancellation
+        except Exception as exc:
+            print(f"[RealtimeClient] SDK error in event loop: {exc}")
+            # Mark session as disconnected but don't stop processing
+            if "not connected" in str(exc).lower() or "connection" in str(exc).lower():
+                print("[RealtimeClient] Connection lost, marking session as disconnected.")
+                self.session = None
+
+    async def _handle_session_event(self, event: RealtimeSessionEvent) -> None:
+        """Dispatch session events to appropriate handlers."""
+        event_type = getattr(event, "type", None)
+        if not event_type:
+            return
+
+        # Direct event handling - no dictionary lookup needed
+        if event_type == "audio":
+            await self._handle_audio_event(event)
+        elif event_type == "audio_end":
+            await self._handle_audio_end(event)
+        elif event_type == "audio_interrupted":
+            await self._handle_audio_interrupted(event)
+        elif event_type == "agent_start":
+            self._handle_agent_start(event)
+        elif event_type == "history_added":
+            self._handle_history_added(event)
+        elif event_type == "history_updated":
+            self._handle_history_updated(event)
+        elif event_type == "error":
+            print(f"[RealtimeClient] Error from session: {getattr(event, 'error', None)}")
+        elif event_type == "input_audio_timeout_triggered":
+            self.isDetectingUserSpeech = False
+            self.last_user_speech_time = time.time()
+        # Note: Removed raw_model_event handling - use high-level session events instead
+
+    # ------------------------------------------------------------------
+    # Event handlers
+    # ------------------------------------------------------------------
+
+    async def _handle_audio_event(self, event: RealtimeAudio) -> None:
+        """Handle incoming audio from the model."""
+        if not self.isReceivingAudio:
+            self.isReceivingAudio = True
+            self.last_model_audio_time = time.time()
+            # Pause action dispatch when model starts speaking
+            if self._audio_idle_event.is_set():
+                print("[RealtimeClient] Model audio starting; pausing action dispatch.")
+                self._audio_idle_event.clear()
+            if hasattr(self.audio_manager, "last_user_audio_chunk_time"):
+                gap_ms = (time.time() - self.audio_manager.last_user_audio_chunk_time) * 1000
+                print(f"[LAT] user->first_model_audio: {gap_ms:.1f} ms")
+            self._set_first_response()
+
+        try:
+            self.audio_manager.queue_audio(event.audio.data)
+            self.last_model_audio_time = time.time()
+        except Exception as exc:
+            print(f"[RealtimeClient] Error queuing audio: {exc}")
+
+    async def _handle_audio_end(self, event: RealtimeAudioEnd) -> None:
+        """Handle audio end event - SDK manages response lifecycle."""
+        if self.action_manager.isTalkingMovement:
+            asyncio.create_task(self.action_manager.stop_talking())
+        self.isReceivingAudio = False
+        self.last_model_audio_time = time.time()
+        if hasattr(self.audio_manager, "wait_for_playback_idle"):
+            try:
+                await self.audio_manager.wait_for_playback_idle(timeout=3.0)
+            except asyncio.TimeoutError:
+                print("[RealtimeClient] Timeout waiting for playback to drain after audio_end.")
+        self._audio_idle_event.set()
+        self._response_active = False
+        print("[RealtimeClient] Audio response completed.")
+        
+        # Process pending awareness request if queued
+        if self._pending_awareness_request:
+            print("[RealtimeClient] Processing queued awareness request")
+            self._pending_awareness_request = None
+            await self._do_send_awareness()
+
+    async def _handle_audio_interrupted(self, event: RealtimeAudioInterrupted) -> None:
+        """User started speaking - interrupt everything immediately."""
+        print("[RealtimeClient] 🎤 User speaking detected - interrupting robot!")
+        self.isDetectingUserSpeech = True
+        self.last_user_speech_time = time.time()
+        
+        # Clear all queued actions and audio immediately
+        await self._clear_interaction_pipeline(reason="user_speech_detected", reset_pose=False)
+        
+        # Stop current audio playback
+        if self.audio_manager:
+            try:
+                self.audio_manager.interrupt_playback("user_speech")
+            except Exception as exc:
+                print(f"[RealtimeClient] Error interrupting playback: {exc}")
+        
+        # Stop any talking movement
+        if self.action_manager and self.action_manager.isTalkingMovement:
+            try:
+                await self.action_manager.stop_talking()
+            except Exception as exc:
+                print(f"[RealtimeClient] Error stopping talking: {exc}")
+        
+        self.isReceivingAudio = False
+        self._response_active = False
+        print("[RealtimeClient] Interruption complete - ready for user speech")
+
+    def _handle_agent_start(self, event: RealtimeAgentStartEvent) -> None:
+        """Handle agent start event - SDK manages response lifecycle."""
+        self._response_active = True
+        self.last_response_created_time = time.time()
+        self._set_first_response()
+
+    def _handle_history_added(self, event: RealtimeHistoryAdded) -> None:
+        """Handle history added event."""
+        if (item := getattr(event, "item", None)) and getattr(item, "role", None) == "assistant":
+            for content in getattr(item, "content", []):
+                if getattr(content, "type", None) == "text" and (text := getattr(content, "text", "")):
+                    self._set_first_response()
+                    print(f"Assistant: {text}")
+
+    def _handle_history_updated(self, event: RealtimeHistoryUpdated) -> None:
+        """Handle history updated event."""
+        if event.history and (item := event.history[-1]) and getattr(item, "role", None) == "assistant":
+            for content in getattr(item, "content", []):
+                if getattr(content, "type", None) == "text" and (text := getattr(content, "text", "")):
+                    print(f"Assistant (update): {text}")
+
+    # Note: Removed _handle_raw_model_event - SDK provides high-level events (audio, audio_end, etc.)
+    # Speech detection, interruptions, and transcripts are handled by session events
+
+    # ------------------------------------------------------------------
+    # Audio streaming to the model
+    # ------------------------------------------------------------------
+    async def process_outgoing_audio(self) -> None:
+        """Process outgoing audio from the queue and send to the model."""
+        if not self.audio_manager:
+            return
+        print("[RealtimeClient] Starting outgoing audio processing...")
+        audio_sent_count = 0
+        consecutive_errors = 0
+        max_consecutive_errors = 5
+        
+        while not self.is_shutdown:
+            try:
+                # Check connection state first
+                if not self.session:
+                    # Clear queue while disconnected to prevent unbounded growth
+                    try:
+                        while not self.audio_manager.outgoing_data_queue.empty():
+                            self.audio_manager.outgoing_data_queue.get_nowait()
+                            self.audio_manager.outgoing_data_queue.task_done()
+                    except:
+                        pass
+                    await asyncio.sleep(0.5)
+                    continue
+                    
+                try:
+                    resampled_bytes = await asyncio.wait_for(
+                        self.audio_manager.outgoing_data_queue.get(),
+                        timeout=0.01,
+                    )
+                except asyncio.TimeoutError:
+                    continue
+
+                await self.session.send_audio(resampled_bytes)
+                self.audio_manager.outgoing_data_queue.task_done()
+                audio_sent_count += 1
+                consecutive_errors = 0  # Reset error counter on success
+                if audio_sent_count % 100 == 1:  # Log every 100th send
+                    print(f"[RealtimeClient] Sent {audio_sent_count} audio chunks to model, queue size: {self.audio_manager.outgoing_data_queue.qsize()}")
+            except Exception as exc:
+                consecutive_errors += 1
+                error_str = str(exc).lower()
+                if "not connected" in error_str or "connection" in error_str:
+                    print(f"[RealtimeClient] Connection lost in audio processing: {exc}")
+                    self.session = None
+                    # Drain queue to prevent unbounded growth
+                    drained = 0
+                    try:
+                        while not self.audio_manager.outgoing_data_queue.empty():
+                            self.audio_manager.outgoing_data_queue.get_nowait()
+                            self.audio_manager.outgoing_data_queue.task_done()
+                            drained += 1
+                    except:
+                        pass
+                    if drained > 0:
+                        print(f"[RealtimeClient] Drained {drained} queued audio chunks after connection loss")
+                    await asyncio.sleep(1)
+                else:
+                    print(f"[RealtimeClient] Error in process_outgoing_audio: {exc}")
+                    # If too many consecutive errors, drain queue to prevent memory issues
+                    if consecutive_errors >= max_consecutive_errors:
+                        print(f"[RealtimeClient] Too many consecutive errors ({consecutive_errors}), draining audio queue")
+                        drained = 0
+                        try:
+                            while not self.audio_manager.outgoing_data_queue.empty():
+                                self.audio_manager.outgoing_data_queue.get_nowait()
+                                self.audio_manager.outgoing_data_queue.task_done()
+                                drained += 1
+                        except:
+                            pass
+                        if drained > 0:
+                            print(f"[RealtimeClient] Drained {drained} queued audio chunks due to persistent errors")
+                        consecutive_errors = 0
+                    await asyncio.sleep(0.1)
+
+    # ------------------------------------------------------------------
+    # Interaction pipeline helpers
+    # ------------------------------------------------------------------
+    async def enqueue_action(self, action_name: str, *, source: str = "perform_action", wait_for_completion: bool = True) -> str:
+        """Enqueue an action and optionally wait for it to complete.
+        
+        Args:
+            action_name: The action(s) to perform
+            source: Source of the action request
+            wait_for_completion: If True, waits until action completes before returning
+            
+        Returns:
+            JSON string with status
+        """
+        action = (action_name or "").strip()
+        if not action:
+            return json.dumps({"status": "ignored", "reason": "empty_action"})
+
+        # Create unique action ID
+        action_id = f"{action}_{time.time()}_{id(self)}"
+        
+        # Create completion event if waiting
+        completion_event = None
+        if wait_for_completion:
+            completion_event = asyncio.Event()
+            self._action_completion_events[action_id] = completion_event
+        
+        item = _QueuedAction(name=action, enqueued_at=time.time(), source=source, action_id=action_id)
+        await self._queued_actions.put(item)
+        print(f"[RealtimeClient] Queued action '{action}' from {source} (id={action_id[:20]}...)")
+        
+        if wait_for_completion and completion_event:
+            print(f"[RealtimeClient] Waiting for action '{action}' to complete...")
+            try:
+                # Wait up to 30 seconds for action to complete
+                await asyncio.wait_for(completion_event.wait(), timeout=30.0)
+                print(f"[RealtimeClient] Action '{action}' completed")
+                return json.dumps({"status": "completed", "action": action})
+            except asyncio.TimeoutError:
+                print(f"[RealtimeClient] Action '{action}' timed out after 30s")
+                return json.dumps({"status": "timeout", "action": action})
+            finally:
+                # Clean up completion event
+                if action_id in self._action_completion_events:
+                    del self._action_completion_events[action_id]
+        else:
+            return json.dumps({"status": "queued", "action": action, "action_id": action_id})
+
+    async def _run_action_worker(self) -> None:
+        """Background worker that executes queued actions."""
+        print("[RealtimeClient] Action worker started.")
+        try:
+            while not self.is_shutdown:
+                try:
+                    item = await asyncio.wait_for(self._queued_actions.get(), timeout=0.5)
+                except asyncio.TimeoutError:
+                    continue
+                except asyncio.CancelledError:
+                    break
+
+                if self.is_shutdown:
+                    self._queued_actions.task_done()
+                    break
+
+                try:
+                    await self._audio_idle_event.wait()
+                    if self.is_shutdown:
+                        break
+                    print(f"[RealtimeClient] Executing queued action '{item.name}' (source={item.source}, id={item.action_id[:20] if item.action_id else 'none'}...).")
+                    self._current_action_task = asyncio.create_task(self.action_manager.perform_action(item.name))
+                    try:
+                        await self._current_action_task
+                        print(f"[RealtimeClient] Action '{item.name}' finished successfully")
+                        # Signal completion if someone is waiting
+                        if item.action_id and item.action_id in self._action_completion_events:
+                            self._action_completion_events[item.action_id].set()
+                    except asyncio.CancelledError:
+                        print(f"[RealtimeClient] Action '{item.name}' cancelled.")
+                        # Still signal completion (with cancellation)
+                        if item.action_id and item.action_id in self._action_completion_events:
+                            self._action_completion_events[item.action_id].set()
+                        raise
+                    finally:
+                        self._current_action_task = None
+                except asyncio.CancelledError:
+                    self._queued_actions.task_done()
+                    break
+                except Exception as exc:
+                    print(f"[RealtimeClient] Error running action '{item.name}': {exc}")
+                finally:
+                    self._queued_actions.task_done()
+        finally:
+            print("[RealtimeClient] Action worker stopped.")
+
+    async def _cancel_current_action(self, *, reason: str) -> None:
+        if self._current_action_task and not self._current_action_task.done():
+            print(f"[RealtimeClient] Cancelling current action due to {reason}...")
+            self._current_action_task.cancel()
+            try:
+                await self._current_action_task
+            except asyncio.CancelledError:
+                pass
+            finally:
+                self._current_action_task = None
+        if self.action_manager.isTakingAction or self.action_manager.isTalkingMovement:
+            await self.action_manager.interrupt_actions(reset_posture=False)
+
+    async def _drain_action_queue(self, *, reason: str) -> int:
+        drained = 0
+        while not self._queued_actions.empty():
+            try:
+                self._queued_actions.get_nowait()
+                self._queued_actions.task_done()
+                drained += 1
+            except asyncio.QueueEmpty:
+                break
+        if drained:
+            print(f"[RealtimeClient] Cleared {drained} queued actions due to {reason}.")
+        return drained
+
+    async def _clear_interaction_pipeline(self, *, reason: str, reset_pose: bool) -> None:
+        """Clear all pending actions and audio. SDK manages response lifecycle."""
+        print(f"[RealtimeClient] Clearing interaction pipeline ({reason}).")
+        await self._cancel_current_action(reason=reason)
+        await self._drain_action_queue(reason=reason)
+        try:
+            self.audio_manager.interrupt_playback(reason)
+        except Exception as exc:
+            print(f"[RealtimeClient] Error clearing playback during {reason}: {exc}")
+        self.isReceivingAudio = False
+        self._audio_idle_event.set()
+        # SDK manages response state - we just handle interruption via session.interrupt()
+        if self.session:
+            try:
+                await self.session.interrupt()
+            except Exception as exc:
+                print(f"[RealtimeClient] Error sending interrupt to session: {exc}")
+        if reset_pose:
+            try:
+                await self.action_manager.interrupt_actions(reset_posture=True)
+            except Exception as exc:
+                print(f"[RealtimeClient] Error resetting posture during {reason}: {exc}")
+
+    # ------------------------------------------------------------------
+    # Utility methods
+    # ------------------------------------------------------------------
+    
+    def _touch_activity(self) -> None:
+        """Update all activity timestamps to current time."""
+        now = time.time()
+        self.last_model_audio_time = now
+        self.last_user_speech_time = now
+        self.last_response_created_time = now
+    
+    def _set_first_response(self) -> None:
+        """Set the first response event if not already set."""
+        if not self.first_response_event.is_set():
+            self.first_response_event.set()
+    
+    def is_quiet_for(self, duration: float) -> bool:
+        """Check if there's been no activity for the specified duration."""
+        last_activity = max(
+            self.last_model_audio_time,
+            self.last_user_speech_time,
+            self.last_response_created_time,
+        )
+        if self.isDetectingUserSpeech or self.isReceivingAudio:
+            return False
+        return (time.time() - last_activity) >= duration

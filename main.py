@@ -8,6 +8,7 @@ import asyncio
 import time
 import signal
 import os
+import traceback
 from action_manager import ActionManager
 from audio_manager import AudioManager
 from function_call_manager import FunctionCallManager
@@ -155,6 +156,12 @@ async def main():
         await create_session_task
         await client.send_awareness()
 
+        try:
+            await client.wait_for_first_response(timeout=15)
+            print("[Main] Initial response detected; starting environment monitoring.")
+        except asyncio.TimeoutError:
+            print("[Main] Timed out waiting for initial response; starting environment monitoring anyway.")
+
         # 5. Start background task and store the handle
         detect_status_task = asyncio.create_task(action_manager.detect_status(audio_manager, client))
 
@@ -167,6 +174,7 @@ async def main():
         print("Main task cancelled.")
     except Exception as e:
         print(f"Error in main loop: {e}")
+        traceback.print_exc()
     finally:
         print("Main loop finished or interrupted.")
         # Ensure shutdown completes if it was initiated by signal

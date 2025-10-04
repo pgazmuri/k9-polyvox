@@ -8,6 +8,7 @@ from queue import Queue
 import time
 import traceback
 import wave
+from typing import Optional
 
 from realtime_client import RealtimeClient
 
@@ -78,13 +79,35 @@ class AudioManager:
         print(f"[AudioManager] Chunk frames (model/mic/speaker): {self.model_chunk_frames}/{self.input_chunk_size}/{self.output_chunk_size}")
 
         self.outgoing_data_queue = asyncio.Queue()  # For sending audio to the server
-        self.incoming_audio_queue = asyncio.Queue()  # For audio playback
+        self.incoming_audio_queue = asyncio.Queue(maxsize=500)  # Larger buffer for playback
+        self.playback_idle_event = asyncio.Event()
+        self.playback_idle_event.set()
         self.dropped_frames = 0
         self.is_shutting_down = False  # Shutdown flag
         self._playback_task = None  # To manage the playback task
         self.last_user_audio_chunk_time = 0.0  # latency instrumentation
         self.latest_volume = 0.0
-        self.enable_barge_in = os.environ.get("ENABLE_BARGE_IN", "0") == "1"
+        # Volume thresholds for audio gating
+        self.silence_threshold = float(os.environ.get("SILENCE_THRESHOLD", "25"))  # Drop audio below this (general silence)
+        self.barge_in_volume_threshold = float(os.environ.get("BARGE_IN_VOLUME_THRESHOLD", "50"))  # Higher threshold when robot speaking
+        # Auto-enable barge-in if speaker is disabled (no echo to worry about)
+        speaker_disabled = os.environ.get("DISABLE_PIDOG_SPEAKER", "0") == "1"
+        barge_in_explicit = os.environ.get("ENABLE_BARGE_IN", "0") == "1"
+        self.enable_barge_in = barge_in_explicit or speaker_disabled
+        self._audio_chunks_captured = 0
+        self._audio_chunks_dropped_talking = 0
+        self._audio_chunks_dropped_silence = 0
+        # State tracking for smart silence gating
+        self._speech_active = False  # Are we currently in a speech segment?
+        self._last_speech_time = 0.0  # When did we last detect speech-level volume?
+        self._speech_tail_duration = 0.5  # Seconds to keep sending after speech stops (for VAD)
+        print(f"[AudioManager] Barge-in enabled: {self.enable_barge_in} (explicit={barge_in_explicit}, speaker_disabled={speaker_disabled})")
+        print(f"[AudioManager] Silence threshold: {self.silence_threshold} (audio below this may be gated to save tokens)")
+        print(f"[AudioManager] Barge-in volume threshold: {self.barge_in_volume_threshold} (audio below this dropped when robot speaks)")
+        
+        # Speech amplitude tracking for head motion
+        self.current_speech_amplitude = 0.0  # Normalized 0.0-1.0
+        self.speech_amp_smoothing = float(os.environ.get("SPEECH_AMP_SMOOTHING", "0.15"))  # EMA alpha
 
         # Find device indices (replace with your actual logic if needed)
         # self.input_device_index = self._find_device_index("pulse")  # Example
@@ -109,7 +132,22 @@ class AudioManager:
         #         stream_callback=self.audio_output_callback
         #     )
         self.incoming_audio_queue = asyncio.Queue()
+        if self.loop.is_running():
+            self.loop.call_soon_threadsafe(self.playback_idle_event.set)
+        else:
+            self.playback_idle_event.set()
         self._audio_buffer = bytearray()
+
+    def interrupt_playback(self, reason: str = ""):
+        reason_str = f" ({reason})" if reason else ""
+        print(f"[AudioManager] Interrupting playback{reason_str}...")
+        self.clear_audio_buffer()
+        if self.action_manager and self.action_manager.isTalkingMovement:
+            try:
+                if self.loop.is_running():
+                    self.loop.call_soon_threadsafe(asyncio.create_task, self.action_manager.stop_talking())
+            except Exception as exc:
+                print(f"[AudioManager] Error scheduling stop_talking: {exc}")
 
 
     def _get_default_device(self, is_input: bool):
@@ -212,6 +250,8 @@ class AudioManager:
                 audio_np = np.clip(resampled, -32768, 32767).astype(np.int16)
 
             chunk_source = audio_np.tobytes()
+            if self.playback_idle_event.is_set():
+                self.playback_idle_event.clear()
 
             chunk_bytes = self.output_chunk_size * 2
             if chunk_bytes <= 0:
@@ -240,9 +280,14 @@ class AudioManager:
         print("[AudioManager] Streams stopped.")
         self.dropped_frames = 0
         self.latest_volume = 0
+        self.current_speech_amplitude = 0.0
         self.action_manager.isTalkingMovement = False
-        self.incoming_audio_queue = asyncio.Queue(maxsize=100)
-        self.outgoing_data_queue = asyncio.Queue(maxsize=100)
+        self.incoming_audio_queue = asyncio.Queue(maxsize=500)
+        self.outgoing_data_queue = asyncio.Queue(maxsize=500)
+        if self.loop.is_running():
+            self.loop.call_soon_threadsafe(self.playback_idle_event.set)
+        else:
+            self.playback_idle_event.set()
         print("[AudioManager] Queues cleared.")
 
     def start_streams(self):
@@ -289,10 +334,52 @@ class AudioManager:
     def audio_input_callback(self, in_data, frame_count, time_info, status):
         audio_data = np.frombuffer(in_data, dtype=np.int16)
         self.latest_volume = np.sqrt(np.mean(audio_data**2))
-        # If robot speaking, drop mic unless barge-in enabled
-        if (self.action_manager.isTalkingMovement and not self.action_manager.PIDOG_SPEAKER_DISABLED \
-            and not self.enable_barge_in):
-            return (None, pyaudio.paContinue)
+        current_time = time.time()
+        
+        # When robot is speaking, use higher threshold to distinguish user speech from echo
+        if self.action_manager.isTalkingMovement and not self.action_manager.PIDOG_SPEAKER_DISABLED:
+            # If barge-in explicitly disabled, drop all audio
+            if not self.enable_barge_in:
+                self._audio_chunks_dropped_talking += 1
+                if self._audio_chunks_dropped_talking % 50 == 1:
+                    print(f"[AudioManager] Dropping audio (barge-in disabled), dropped {self._audio_chunks_dropped_talking} total")
+                return (None, pyaudio.paContinue)
+            
+            # Volume-based filtering when robot is speaking (prevents echo feedback)
+            if self.latest_volume < self.barge_in_volume_threshold:
+                self._audio_chunks_dropped_talking += 1
+                if self._audio_chunks_dropped_talking % 50 == 1:
+                    print(f"[AudioManager] Dropping low-volume audio ({self.latest_volume:.1f} < {self.barge_in_volume_threshold}) while robot speaks, dropped {self._audio_chunks_dropped_talking} total")
+                return (None, pyaudio.paContinue)
+        else:
+            # When robot is NOT speaking, use smart silence gating
+            # Goal: Save tokens but maintain VAD continuity for speech detection
+            
+            # Check if this chunk has speech-level volume
+            has_speech = self.latest_volume >= self.silence_threshold
+            
+            if has_speech:
+                # Speech detected - start/continue speech segment
+                if not self._speech_active:
+                    print(f"[AudioManager] Speech detected (vol={self.latest_volume:.1f}), activating audio stream")
+                    self._speech_active = True
+                self._last_speech_time = current_time
+            else:
+                # Below threshold - check if we should still send for VAD continuity
+                time_since_speech = current_time - self._last_speech_time
+                
+                if self._speech_active and time_since_speech > self._speech_tail_duration:
+                    # Been quiet for too long after speech - end segment
+                    print(f"[AudioManager] Speech ended (quiet for {time_since_speech:.1f}s), deactivating audio stream")
+                    self._speech_active = False
+                
+                if not self._speech_active:
+                    # No recent speech - drop this silence to save tokens
+                    self._audio_chunks_dropped_silence += 1
+                    if self._audio_chunks_dropped_silence % 100 == 1:
+                        print(f"[AudioManager] Dropping silence ({self.latest_volume:.1f} < {self.silence_threshold}), dropped {self._audio_chunks_dropped_silence} total")
+                    return (None, pyaudio.paContinue)
+                # else: In speech tail - send for VAD continuity
         
         try:
             if self.input_rate == self.model_rate:
@@ -311,8 +398,13 @@ class AudioManager:
                     resampled_data = np.clip(resampled, -32768, 32767).astype(np.int16)
             resampled_bytes = resampled_data.astype(np.int16).tobytes()
             self.last_user_audio_chunk_time = time.time()
+            self._audio_chunks_captured += 1
+            if self._audio_chunks_captured % 100 == 1:  # Log every 100th chunk
+                print(f"[AudioManager] Captured {self._audio_chunks_captured} audio chunks, queue size: {self.outgoing_data_queue.qsize()}")
             if self.loop.is_running():
                 asyncio.run_coroutine_threadsafe(self._safe_queue_put(resampled_bytes), self.loop)
+            else:
+                print(f"[AudioManager] WARNING: Event loop not running, cannot queue audio!")
         except Exception as e:
             print(f"[AudioManager] Error adding audio to outgoing_data_queue: {e}")
             traceback.print_exc()
@@ -343,33 +435,55 @@ class AudioManager:
             if not hasattr(self, "_audio_buffer"):
                 self._audio_buffer = bytearray()
 
-            if not self.incoming_audio_queue.empty() and not self.action_manager.isTalkingMovement:
-                self.action_manager.isTalkingMovement = True
-                self.loop.call_soon_threadsafe(asyncio.create_task, self.action_manager.start_talking())
-
+            # Fill buffer from queue
             while len(self._audio_buffer) < expected_size and not self.incoming_audio_queue.empty():
                 audio_chunk = self.incoming_audio_queue.get_nowait()
                 self._audio_buffer.extend(audio_chunk)
 
-            if len(self._audio_buffer) >= expected_size:
+            # Determine if we have real audio to play
+            has_real_audio = len(self._audio_buffer) >= expected_size
+            
+            if has_real_audio:
+                # Start head talking only when we actually have audio to play
+                if not self.action_manager.isTalkingMovement:
+                    self.action_manager.isTalkingMovement = True
+                    self.loop.call_soon_threadsafe(asyncio.create_task, self.action_manager.start_talking())
+                
                 audio_chunk = self._audio_buffer[:expected_size]
                 self._audio_buffer = self._audio_buffer[expected_size:]
             else:
+                # No real audio - pad with silence and stop talking
                 audio_chunk = self._audio_buffer
                 audio_chunk += b'\x00' * (expected_size - len(audio_chunk))
                 self._audio_buffer = bytearray()
 
                 if self.action_manager.isTalkingMovement:
                     self.action_manager.isTalkingMovement = False
+                    self.current_speech_amplitude = 0.0  # Reset amplitude when stopping
                     self.loop.call_soon_threadsafe(asyncio.create_task, self.action_manager.stop_talking())
+
+            if len(self._audio_buffer) == 0 and self.incoming_audio_queue.empty():
+                if not self.playback_idle_event.is_set():
+                    if self.loop.is_running():
+                        self.loop.call_soon_threadsafe(self.playback_idle_event.set)
+                    else:
+                        self.playback_idle_event.set()
 
             audio_data_np = np.frombuffer(audio_chunk, dtype=np.int16)
             scaled_data_np = np.clip(audio_data_np * self.action_manager.state.volume, -32768, 32767).astype(np.int16)
 
+            # Calculate amplitude for all audio (for head motion tracking)
+            audio_float = scaled_data_np.astype(np.float32)
+            rms = np.sqrt(np.mean(audio_float**2))
+            norm_amp = min(rms / 10000.0, 1.0)
+            
+            # Update speech amplitude with exponential moving average smoothing
+            alpha = self.speech_amp_smoothing
+            self.current_speech_amplitude = alpha * norm_amp + (1 - alpha) * self.current_speech_amplitude
+
+            # Update visualizations when talking
             if self.action_manager.isTalkingMovement:
-                audio_float = scaled_data_np.astype(np.float32)
-                rms = np.sqrt(np.mean(audio_float**2))
-                norm_amp = min(rms / 10000.0, 1.0)
+                # Update lightbar visualization
                 r = int(255 * norm_amp)
                 g = int(255 * (1 - norm_amp))
                 b = 0
@@ -385,6 +499,15 @@ class AudioManager:
             print(f"[AudioManager] Error in audio_output_callback: {e}")
             traceback.print_exc()
             return (b'\x00' * frame_count * 2, pyaudio.paContinue)
+
+    async def wait_for_playback_idle(self, timeout: Optional[float] = None) -> None:
+        try:
+            if timeout is None:
+                await self.playback_idle_event.wait()
+            else:
+                await asyncio.wait_for(self.playback_idle_event.wait(), timeout)
+        except asyncio.TimeoutError:
+            raise
 
     def close(self):
         print("[AudioManager] Closing streams...")

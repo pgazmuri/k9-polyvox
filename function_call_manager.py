@@ -2,6 +2,7 @@ import json
 import os
 import sys
 import signal
+from typing import Any, Dict, Optional
 
 class FunctionCallManager:
     """
@@ -22,112 +23,22 @@ class FunctionCallManager:
         Parses the function call message, executes the correct action, 
         and returns a string result to be sent back to the GPT model.
         """
+        print(f"[FunctionCallManager] Handling function call: {function_call}")
         try:
             func_name = function_call['name']
-
-            if func_name == 'look_and_see':
-                arguments = json.loads(function_call['arguments'])
-                question = arguments.get("question", "")
-                # You could pass a persona prompt if you want
-                #log persona to console
-                print(f"[FunctionCallManager] Persona: {self.client.persona}")
-                result = await self.action_manager.take_photo(persona=self.client.persona, question=question, client=self.client)
-                print(f"[FunctionCallManager] look_and_see triggered image send: {result}")
-                return result
-
-            elif func_name == 'get_system_status':
-                result = await self.get_system_status()
-                return result
-
-            elif func_name == 'shut_down':
-                print("[FunctionCallManager] Shutting down...")
+            raw_arguments = function_call.get('arguments')
+            arguments: Dict[str, Any]
+            if isinstance(raw_arguments, str) and raw_arguments:
                 try:
-                    # Assuming python_executable and script_path are defined earlier
-                    script_path = os.path.abspath(os.path.join(os.path.dirname(__file__), 'main.py'))
-                    python_executable = sys.executable
-
-                    print(f"Sending SIGTERM to process {os.getpid()} to initiate shutdown.")
-                    # Send SIGTERM to trigger the shutdown handler in main.py
-                    os.kill(os.getpid(), signal.SIGTERM)
-                    
-                    # Return success, the process will exit via the signal handler
-                    return json.dumps({"status": "success", "message": "shutdown initiated"})
-
-                except Exception as e:
-                    print(f"[FunctionCallManager] Error during pull/restart: {e}")
-                    return json.dumps({"status": "error", "message": str(e)})
-                
-            elif func_name == 'pull_latest_code_and_restart':
-                print("[FunctionCallManager] Attempting to pull latest code and restart...")
-                try:
-                    # Assuming python_executable and script_path are defined earlier
-                    script_path = os.path.abspath(os.path.join(os.path.dirname(__file__), 'main.py'))
-                    python_executable = sys.executable
-
-                    print("Pulling latest code...")
-                    os.system("git pull")
-                    
-                    print(f"Scheduling restart: {python_executable} {script_path}")
-                    # Schedule restart command to run after a delay
-                    os.system(f'(sleep 8; "{python_executable}" "{script_path}")')
-
-                    print(f"Sending SIGTERM to process {os.getpid()} to initiate shutdown.")
-                    # Send SIGTERM to trigger the shutdown handler in main.py
-                    os.kill(os.getpid(), signal.SIGTERM)
-                    
-                    # Return success, the process will exit via the signal handler
-                    return json.dumps({"status": "success", "message": "Pull successful, shutdown initiated, restart scheduled."})
-
-                except Exception as e:
-                    print(f"[FunctionCallManager] Error during pull/restart: {e}")
-                    return json.dumps({"status": "error", "message": str(e)})
-
-            elif func_name == 'get_awareness_status':
-                result = await self.get_awareness_status()
-                return result
-
-            elif func_name == 'set_volume':
-                arguments = json.loads(function_call['arguments'])
-                volume_level = arguments.get("volume_level", 1)
-                result = await self.set_volume(volume_level)
-                return result
-            
-            elif func_name == 'set_goal':
-                arguments = json.loads(function_call['arguments'])
-                self.action_manager.state.goal = arguments.get("goal", "You are unsure of your goal. Ask a question or make a statement in keeping with your persona and the current state.")
-                self.client.persona["default_motivation"] = self.action_manager.state.goal
-                print(f"[FunctionCallManager] Goal set to: {self.action_manager.state.goal}")
-                result = "success"
-                return result
-            
-            elif func_name == 'create_new_persona':
-                arguments = json.loads(function_call['arguments'])
-                persona_description = arguments.get("persona_description", None)
-                result = await self.create_new_persona(persona_description)
-                return result
-
-            elif func_name == 'perform_action':
-                arguments = json.loads(function_call['arguments'])
-                action_name = arguments.get("action_name", "")
-                result = await self.perform_action(action_name)
-                return result
-
-            elif func_name == 'switch_persona':
-                arguments = json.loads(function_call['arguments'])
-                persona_name = arguments.get("persona_name", "Vektor Pulsecheck")
-                if self.client.persona['name'] == persona_name:
-                    return "You are already in this persona."
-                print(f"[FunctionCallManager] Switching persona to: {persona_name}")
-                # Call the new method in ActionManager to handle effects and reconnect
-                await self.action_manager.handle_persona_switch_effects(persona_name, self.client)
-                result = "persona_switched"
-                print(f"[FunctionCallManager] Result of 'switch_persona': {result}")
-                return result
-
+                    arguments = json.loads(raw_arguments)
+                except json.JSONDecodeError:
+                    arguments = {}
+            elif isinstance(raw_arguments, dict):
+                arguments = raw_arguments
             else:
-                result = f"[FunctionCallManager] Unknown function call: {func_name}"
-                print(result)
-                return result
+                arguments = {}
+
+            return await self.execute_tool(func_name, arguments)
         except Exception as e:
             import traceback
             error_message = f"[FunctionCallManager] Error: {e}"
@@ -136,6 +47,99 @@ class FunctionCallManager:
             print(error_message)
             print(stack_trace)
             return f"{error_message}\n{stack_trace}"
+
+    async def execute_tool(self, func_name: str, arguments: Optional[Dict[str, Any]] = None):
+        arguments = arguments or {}
+
+        if func_name == 'look_and_see':
+            question = arguments.get("question", "")
+            print(f"[FunctionCallManager] Persona: {self.client.persona}")
+            result = await self.action_manager.take_photo(persona=self.client.persona, question=question, client=self.client)
+            print(f"[FunctionCallManager] look_and_see triggered image send: {result}")
+            return result
+
+        if func_name == 'get_system_status':
+            return await self.get_system_status()
+
+        if func_name == 'shut_down':
+            print("[FunctionCallManager] Shutting down...")
+            try:
+                script_path = os.path.abspath(os.path.join(os.path.dirname(__file__), 'main.py'))
+                python_executable = sys.executable
+
+                print(f"Sending SIGTERM to process {os.getpid()} to initiate shutdown.")
+                os.kill(os.getpid(), signal.SIGTERM)
+                return json.dumps({"status": "success", "message": "shutdown initiated"})
+            except Exception as e:
+                print(f"[FunctionCallManager] Error during pull/restart: {e}")
+                return json.dumps({"status": "error", "message": str(e)})
+
+        if func_name == 'pull_latest_code_and_restart':
+            print("[FunctionCallManager] Attempting to pull latest code and restart...")
+            try:
+                script_path = os.path.abspath(os.path.join(os.path.dirname(__file__), 'main.py'))
+                python_executable = sys.executable
+
+                print("Pulling latest code...")
+                os.system("git pull")
+
+                print(f"Scheduling restart: {python_executable} {script_path}")
+                os.system(f'(sleep 8; "{python_executable}" "{script_path}")')
+
+                print(f"Sending SIGTERM to process {os.getpid()} to initiate shutdown.")
+                os.kill(os.getpid(), signal.SIGTERM)
+
+                return json.dumps({"status": "success", "message": "Pull successful, shutdown initiated, restart scheduled."})
+            except Exception as e:
+                print(f"[FunctionCallManager] Error during pull/restart: {e}")
+                return json.dumps({"status": "error", "message": str(e)})
+
+        if func_name == 'get_awareness_status':
+            return await self.get_awareness_status()
+
+        if func_name == 'set_volume':
+            volume_level = arguments.get("volume_level", 1)
+            return await self.set_volume(volume_level)
+
+        if func_name == 'set_goal':
+            self.action_manager.state.goal = arguments.get(
+                "goal",
+                "You are unsure of your goal. Ask a question or make a statement in keeping with your persona and the current state.",
+            )
+            self.client.persona["default_motivation"] = self.action_manager.state.goal
+            print(f"[FunctionCallManager] Goal set to: {self.action_manager.state.goal}")
+            return "success"
+
+        if func_name == 'create_new_persona':
+            persona_description = arguments.get("persona_description", None)
+            return await self.create_new_persona(persona_description)
+
+        if func_name == 'perform_action':
+            action_name = arguments.get("action_name", "")
+            return await self.perform_action(action_name)
+
+        if func_name == 'switch_persona':
+            persona_name = arguments.get("persona_name", "Vektor Pulsecheck")
+            if self.client.persona['name'] == persona_name:
+                return "You are already in this persona."
+            print(f"[FunctionCallManager] Switching persona to: {persona_name}")
+            await self.action_manager.handle_persona_switch_effects(persona_name, self.client)
+            result = "persona_switched"
+            print(f"[FunctionCallManager] Result of 'switch_persona': {result}")
+            return result
+
+        # Check if it might be an action that was called as a tool by mistake
+        available_actions = self.action_manager.get_available_actions()
+        if func_name in available_actions:
+            print(f"[FunctionCallManager] '{func_name}' is not a tool, executing as action instead")
+            return await self.perform_action(func_name)
+
+        result = json.dumps({
+            "status": "error",
+            "message": f"Unknown function '{func_name}'. Use 'perform_action' with action_name parameter for robotic actions."
+        })
+        print(f"[FunctionCallManager] Unknown function call: {func_name}")
+        return result
 
     async def shut_down(self):
         """
@@ -157,6 +161,14 @@ class FunctionCallManager:
         Retrieves text telling you what the robot dog just noticed.
         """
         print("[FunctionCallManager] Getting awareness status...")
+        
+        # Check if there's a pending stimulus to deliver
+        if self.action_manager.state.pending_stimulus:
+            stimulus = self.action_manager.state.pending_stimulus
+            self.action_manager.state.pending_stimulus = None  # Clear it after reading
+            print(f"[FunctionCallManager] Delivering pending stimulus: {stimulus}")
+            return stimulus
+        
         result = self.action_manager.state.goal
         print(f"[FunctionCallManager] Result of 'get_awareness_status': {result}")
         return result
@@ -189,6 +201,11 @@ class FunctionCallManager:
         """
         Performs one or more robotic actions simultaneously.
         """
+        if hasattr(self.client, "enqueue_action") and callable(self.client.enqueue_action):
+            result = await self.client.enqueue_action(action_name, source="perform_action_tool")
+            print(f"[FunctionCallManager] Result of 'perform_action': {result}")
+            return result
+
         await self.action_manager.perform_action(action_name)
         print(f"[FunctionCallManager] Result of 'perform_action': success")
         return "success"
