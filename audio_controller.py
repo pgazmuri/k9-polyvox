@@ -12,12 +12,12 @@ class AudioController:
     def __init__(self, dog) -> None:
         self._dog = dog
 
-    async def play_file_async(self, filename: str) -> None:
+    async def play_file_async(self, filename: str, volume: int = 100) -> None:
         if not filename:
             return
-        await asyncio.to_thread(self._dog.speak_block, filename)
+        await asyncio.to_thread(self._dog.speak_block, filename, volume)
 
-    def play(self, name: str, volume: int = 100):
+    def play(self, name: str, volume = 100):
         if not name:
             return False
 

@@ -1,3 +1,4 @@
+import asyncio
 import json
 import os
 import sys
@@ -194,8 +195,9 @@ class FunctionCallManager:
         Generates and switches to a new persona based on the description provided.
         """
         print(f"[FunctionCallManager] Requesting ActionManager to create new persona: {persona_description}")
-        result = await self.action_manager.create_new_persona_action(persona_description, self.client)
-        return result
+        # Let action_manager handle the task creation (like handle_persona_switch_effects does)
+        await self.action_manager.create_new_persona_action(persona_description, self.client)
+        return {"status": "creating", "description": persona_description}
 
     async def perform_action(self, action_name):
         """

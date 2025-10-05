@@ -19,9 +19,9 @@ from status_reporter import StatusReporter
 FACE_TRACK_UPDATE_INTERVAL = float(os.environ.get("FACE_TRACK_UPDATE_INTERVAL", "0.05"))
 FACE_TRACK_RECENTER_TIMEOUT = float(os.environ.get("FACE_TRACK_RECENTER_TIMEOUT", "2.0"))
 FACE_TRACK_RECENTER_STEP = float(os.environ.get("FACE_TRACK_RECENTER_STEP", "2.0"))
-STIMULUS_MIN_INTERVAL = float(os.environ.get("STIMULUS_MIN_INTERVAL", "10.0"))
-STIMULUS_QUIET_PERIOD = float(os.environ.get("STIMULUS_QUIET_PERIOD", "30.0"))
-STIMULUS_GRACE_AFTER_FIRST_UTTERANCE = float(os.environ.get("STIMULUS_GRACE_AFTER_FIRST_UTTERANCE", "30.0"))
+STIMULUS_MIN_INTERVAL = float(os.environ.get("STIMULUS_MIN_INTERVAL", "5.0"))  # Minimum time between same stimulus type
+STIMULUS_QUIET_PERIOD = float(os.environ.get("STIMULUS_QUIET_PERIOD", "3.0"))  # How long to wait for quiet before reacting
+STIMULUS_GRACE_AFTER_FIRST_UTTERANCE = float(os.environ.get("STIMULUS_GRACE_AFTER_FIRST_UTTERANCE", "15.0"))  # Cooldown after conversation starts
 SOUND_PASSIVE_WAIT = float(os.environ.get("SOUND_PASSIVE_WAIT", "2.0"))
 
 # External dependencies
@@ -32,6 +32,10 @@ User = os.popen('echo ${SUDO_USER:-$LOGNAME}').readline().strip()
 UserHome = os.popen('getent passwd %s | cut -d: -f 6' % User).readline().strip()
 SOUND_DIR = f"{UserHome}/pidog/sounds/"
 LOCAL_SOUND_DIR = "audio/"
+
+# Volume settings (0-100) for system sound effects
+STARTUP_SOUND_VOLUME = int(os.environ.get("STARTUP_SOUND_VOLUME", "5"))
+PERSONA_TRANSITION_VOLUME = int(os.environ.get("PERSONA_TRANSITION_VOLUME", "5"))
 
 
 def get_sound_duration(sound_name: str) -> float:
@@ -84,6 +88,7 @@ from t2_vision import (
     CAMERA_HEIGHT,
 )
 from persona_generator import generate_persona
+from system_prompts import personas
 
 from display_manager import display_message
 
@@ -224,10 +229,16 @@ class ActionManager:
             print(f"[ActionManager] Error forcing response: {force_err}")
 
     def _allow_stimulus(self, event_key: str, now: float) -> bool:
-        # Check grace period after first utterance (face tracking exempt)
-        if event_key != "face" and self._first_utterance_time is not None:
-            if (now - self._first_utterance_time) < STIMULUS_GRACE_AFTER_FIRST_UTTERANCE:
+        # Don't allow stimulus until initial wake-up period is over (5 seconds after first utterance)
+        if self._first_utterance_time is not None:
+            time_since_first = now - self._first_utterance_time
+            if time_since_first < 5.0:
+                # Still in initial wake-up period
                 return False
+            elif time_since_first < STIMULUS_GRACE_AFTER_FIRST_UTTERANCE:
+                # In grace period after initial wake-up (but allow face tracking)
+                if event_key != "face":
+                    return False
         
         last_sent = self._stimulus_last_sent.get(event_key)
         if last_sent is None:
@@ -239,29 +250,33 @@ class ActionManager:
             self._stimulus_last_sent[key] = timestamp
 
     def _can_send_stimulus(self, client, event_key: str = "generic") -> bool:
-        # Face tracking uses shorter quiet period (3s), others use 30s
-        quiet_period = 3.0 if event_key == "face" else self.stimulus_quiet_period
+        # Use configured quiet period for all stimulus types
+        quiet_period = self.stimulus_quiet_period
         
         # Check if system is quiet (no user speech for sufficient time)
+        # Note: We use is_quiet_for when available, which checks for actual speech activity
+        # Don't block on detecting_speech alone - only block if actually receiving/responding
         is_quiet = True
         if hasattr(client, "is_quiet_for"):
             is_quiet = client.is_quiet_for(quiet_period)
         else:
-            is_quiet = not (client.isDetectingUserSpeech)
+            # Fallback: only block if actually receiving audio or responding
+            is_quiet = not (client.isReceivingAudio or getattr(client, "has_active_response", False))
 
         if not is_quiet:
             return False
 
-        # Check if model is currently responding or system is busy
+        # Check if model is currently responding or system is busy with actions
+        # NOTE: We deliberately don't check isDetectingUserSpeech here - that's too sensitive
+        # and blocks legitimate stimulus responses during ambient noise
         return not (
             self.isTalkingMovement
             or self.isTakingAction
             or self.isPlayingSound
             or self._wakeup_active
-            or client.isDetectingUserSpeech
             or client.isReceivingAudio
             or getattr(client, "_response_active", False)
-            or getattr(client, "has_active_response", False)  # Backward compatibility
+            or getattr(client, "has_active_response", False)
         )
 
     async def _dispatch_stimulus(
@@ -344,14 +359,14 @@ class ActionManager:
         except Exception as e:
             print(f"[ActionManager] Error stopping sensory process: {e}")
 
-    async def speak_async(self, filename):
+    async def speak_async(self, filename, volume=100):
         """
         Asynchronously plays a sound file.
         """
         if not filename:
             return
         self.isPlayingSound = True
-        await self.audio.play_file_async(filename)
+        await self.audio.play_file_async(filename, volume)
         print(f"[ActionManager] Finished playing sound: {filename}")
         self.isPlayingSound = False
 
@@ -372,7 +387,7 @@ class ActionManager:
         print("[ActionManager] Initializing posture...")
         powerup_lightbar_task = asyncio.create_task(self.lightbar.power_up_sequence())
         self.isPlayingSound = True
-        music = self.speak("powerup")
+        music = self.speak("powerup", STARTUP_SOUND_VOLUME)
         await self.perform_action('sit,turn_head_forward')
         await self._sync_head_from_hardware(update_return=True)
         await powerup_lightbar_task  # Wait for the power-up sequence to finish
@@ -389,6 +404,9 @@ class ActionManager:
         self.state.reset()
         self.state.head_pose = self.head_controller.current_pose()
         self._initialize_runtime_flags()
+        # Reset first utterance time so wake-up grace period applies to new persona
+        self._first_utterance_time = None
+        print("[ActionManager] Reset state for new persona - wake-up grace period will apply")
         if self.face_tracker.enabled:
             self.face_tracker.mark_return_pose()
 
@@ -512,6 +530,9 @@ class ActionManager:
         return self.sensors.detect_sound_direction()
 
     def detect_sound_direction_change(self, client=None):
+        # Don't detect sound direction when robot is talking (it's just our own voice!)
+        if self.isTalkingMovement or self.isPlayingSound:
+            return False
         return self.sensors.detect_sound_direction_change(client)
 
     async def detect_face_change(self):
@@ -713,35 +734,77 @@ class ActionManager:
         return list(self._action_specs.keys())
 
     @asynccontextmanager
-    async def _persona_transition(self, color: str, audio_file: Optional[str]) -> AsyncIterator[None]:
+    async def _persona_transition(self, color: str, audio_file: Optional[str], volume: int = PERSONA_TRANSITION_VOLUME) -> AsyncIterator[None]:
+        """Context manager for persona transitions with music playing in background."""
+        print(f"[ActionManager] _persona_transition: Starting (color={color}, audio={audio_file})...")
         self.isTakingAction = True
         self.isPlayingSound = True
         self.lightbar_boom(color)
-        music = self.speak(audio_file) if audio_file else None
+        
+        # Start music playing in background (non-blocking)
+        music = None
+        if audio_file:
+            print(f"[ActionManager] Starting background music: {audio_file}")
+            music = self.speak(audio_file, volume)
+        
         try:
+            print("[ActionManager] _persona_transition: Yielding control...")
             yield
+            print("[ActionManager] _persona_transition: Returned from yield, entering cleanup...")
         finally:
+            print("[ActionManager] _persona_transition: In finally block...")
+            # Stop music if still playing
             if music:
                 try:
+                    print("[ActionManager] Stopping persona transition music...")
                     music.music_stop()
+                    print("[ActionManager] Music stopped successfully.")
                 except Exception as stop_error:
                     print(f"[ActionManager] Error stopping persona audio: {stop_error}")
+            print("[ActionManager] Resetting lightbar...")
             self.lightbar_breath()
+            print("[ActionManager] Clearing action flags...")
             self.isTakingAction = False
             self.isPlayingSound = False
+            print("[ActionManager] _persona_transition: Finally block complete.")
 
     async def create_new_persona_action(self, persona_description, client):
-        """Handles the actions associated with creating and switching to a new persona."""
+        """Handles the actions associated with creating and switching to a new persona.
+        Creates a background task so it survives session reconnect (same pattern as persona switching)."""
         print(f"[ActionManager] Creating new persona: {persona_description}")
-        new_persona = None
-        async with self._persona_transition("white", "audio/angelic_ascending.mp3"):
-            new_persona = await generate_persona(persona_description)
-            self.reset_state_for_new_persona()
-            await client.reconnect(new_persona['name'], new_persona)
-        # Check if new_persona was successfully created before accessing its name
-        persona_name = new_persona.get('name', 'Unknown') if new_persona else 'Unknown'
-        print(f"[ActionManager] Successfully created and switched to new persona: {persona_name}")
-        return "success"
+        
+        if hasattr(self, '_persona_creation_task') and self._persona_creation_task and not self._persona_creation_task.done():
+            print("[ActionManager] Cancelling existing persona creation task...")
+            self._persona_creation_task.cancel()
+
+        async def _perform_creation():
+            new_persona = None
+            try:
+                print("[ActionManager] Entering persona transition context...")
+                async with self._persona_transition("white", "audio/angelic_ascending.mp3"):
+                    print("[ActionManager] Inside context, generating persona (music playing in background)...")
+                    new_persona = await generate_persona(persona_description)
+                    print(f"[ActionManager] Persona generated: {new_persona.get('name', 'Unknown') if new_persona else 'None'}")
+                    
+                    print("[ActionManager] Resetting state...")
+                    self.reset_state_for_new_persona()
+                    
+                    print("[ActionManager] About to call reconnect...")
+                    await client.reconnect(new_persona['name'], new_persona)
+                    print("[ActionManager] Reconnect returned successfully.")
+                
+                print("[ActionManager] Exited persona transition context successfully.")
+                # Check if new_persona was successfully created before accessing its name
+                persona_name = new_persona.get('name', 'Unknown') if new_persona else 'Unknown'
+                print(f"[ActionManager] Successfully created and switched to new persona: {persona_name}")
+            except asyncio.CancelledError:
+                print(f"[ActionManager] Persona creation task cancelled")
+            except Exception as e:
+                print(f"[ActionManager] ERROR in persona creation: {e}")
+                import traceback
+                traceback.print_exc()
+
+        self._persona_creation_task = asyncio.create_task(_perform_creation())
 
     async def handle_persona_switch_effects(self, persona_name, client):
         """Handles the visual and audio effects during a persona switch."""
@@ -769,7 +832,7 @@ class ActionManager:
         Also periodically reminds the model of its default goal if it's been inactive.
         """
         is_change = False
-        reminder_interval = 15  # seconds between default goal nudges
+        reminder_interval = 15  # seconds between spontaneous prompts when idle
         self.last_change_time = 0  # Track the last time a change was noticed
         # Backdate reminder timer so the first loop can trigger an immediate wake-up prompt once ready
         self.last_reminder_time = time.time() - reminder_interval
@@ -853,11 +916,11 @@ class ActionManager:
                         )
                     )
 
+                # Update reminder time when actually busy (not just detecting speech)
                 busy = (
                     self.isTalkingMovement
                     or self.isTakingAction
                     or self.isPlayingSound
-                    or client.isDetectingUserSpeech
                 )
                 model_active = client.isReceivingAudio or getattr(client, "has_active_response", False)
                 if busy or model_active:
@@ -888,15 +951,50 @@ class ActionManager:
                         self.last_change_time = current_time
                         self.last_reminder_time = current_time
                     else:
+                        quiet_period = self.stimulus_quiet_period
+                        quiet_ok = True
+                        quiet_age = None
+                        if hasattr(client, "is_quiet_for"):
+                            quiet_ok = client.is_quiet_for(quiet_period)
+                            if hasattr(client, "last_model_audio_time"):
+                                last_activity = max(
+                                    getattr(client, "last_model_audio_time", 0.0),
+                                    getattr(client, "last_user_speech_time", 0.0),
+                                    getattr(client, "last_response_created_time", 0.0),
+                                )
+                                if last_activity:
+                                    quiet_age = time.time() - last_activity
+
+                        blocking_flags = []
+                        if self.isTalkingMovement:
+                            blocking_flags.append("isTalkingMovement")
+                        if self.isTakingAction:
+                            blocking_flags.append("isTakingAction")
+                        if self.isPlayingSound:
+                            blocking_flags.append("isPlayingSound")
+                        if self._wakeup_active:
+                            blocking_flags.append("_wakeup_active")
+                        if client.isReceivingAudio:
+                            blocking_flags.append("client.isReceivingAudio")
+                        if getattr(client, "_response_active", False):
+                            blocking_flags.append("client._response_active")
+                        if getattr(client, "has_active_response", False):
+                            blocking_flags.append("client.has_active_response")
+                        if getattr(client, "isDetectingUserSpeech", False):
+                            blocking_flags.append("client.isDetectingUserSpeech")
+
                         print(
-                            "[ActionManager] Stimulus ignored (busy or not quiet) -> talking=%s action=%s sound=%s detecting_speech=%s receiving_audio=%s active_response=%s"
+                            "[ActionManager] Stimulus ignored (busy or not quiet) -> talking=%s action=%s sound=%s receiving_audio=%s active_response=%s | quiet_ok=%s quiet_age=%.2fs (required %.1fs) | blocking=%s"
                             % (
                                 self.isTalkingMovement,
                                 self.isTakingAction,
                                 self.isPlayingSound,
-                                client.isDetectingUserSpeech,
                                 client.isReceivingAudio,
                                 getattr(client, "has_active_response", False),
+                                quiet_ok,
+                                quiet_age if quiet_age is not None else -1.0,
+                                quiet_period,
+                                ", ".join(blocking_flags) if blocking_flags else "<none>",
                             )
                         )
                 else:

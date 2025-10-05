@@ -104,6 +104,12 @@ class RealtimeClient:
                 "type": "server_vad"
             }
         }
+        
+        # Use the audio_manager's model_rate to ensure sample rate consistency
+        # OpenAI Realtime API supports both 16kHz and 24kHz
+        model_rate = self.audio_manager.model_rate
+        print(f"[RealtimeClient] Configuring audio format for {model_rate} Hz sample rate")
+        
         self._run_config: RealtimeRunConfig = {
             "model_settings": {
                 "model_name": self.model,
@@ -149,6 +155,13 @@ class RealtimeClient:
         if self.session:
             await self.session.close()
             self.session = None
+
+        # Reset response/awareness state so new connections start cleanly
+        self._response_active = False
+        self._pending_awareness_request = None
+        self.isReceivingAudio = False
+        self.isDetectingUserSpeech = False
+        self.last_user_speech_time = 0.0
 
         print("[RealtimeClient] Session closed.")
 
@@ -197,22 +210,81 @@ class RealtimeClient:
 
     async def reconnect(self, persona: str, persona_object: Optional[Dict[str, Any]] = None) -> None:
         """Tear down and re-establish the realtime connection, optionally adding a persona."""
+        print(f"[RealtimeClient] ===== RECONNECT CALLED: persona={persona}, has_object={persona_object is not None} =====")
         try:
+            
+            print("[RealtimeClient] Closing old session...")
             await self.close()
+            print("[RealtimeClient] Old session closed.")
+
+            print("[RealtimeClient] Interrupting playback before reconnect...")
+            self.audio_manager.interrupt_playback(reason="reconnect")
+
+            # Stop audio streams to prevent queuing audio during reconnect
+            print("[RealtimeClient] Stopping audio streams...")
             self.audio_manager.stop_streams()
-            await asyncio.sleep(0.1)
+            
+            await asyncio.sleep(0.2)
+            
+            print("[RealtimeClient] Connecting new session...")
             await self.connect()
+            print("[RealtimeClient] New session connected.")
+            
+            print("[RealtimeClient] Starting audio streams...")
             self.audio_manager.start_streams()
 
             if persona_object and (existing := next((p for p in personas if p["name"] == persona_object["name"]), None)):
+                print(f"[RealtimeClient] Updating existing persona: {persona_object['name']}")
                 existing.update(persona_object)
             elif persona_object:
+                print(f"[RealtimeClient] Adding new persona: {persona_object['name']}")
                 personas.append(persona_object)
 
+            print(f"[RealtimeClient] Updating session with persona: {persona}")
             await self.update_session(persona)
+            print("[RealtimeClient] Session updated.")
+            
+            print("[RealtimeClient] Sending awareness...")
             await self.send_awareness()
+            print("[RealtimeClient] Awareness sent. Reconnect complete.")
         except Exception as exc:
-            print(f"[RealtimeClient] Error in reconnect: {exc}")
+            print(f"[RealtimeClient] ERROR in reconnect: {exc}")
+            import traceback
+            traceback.print_exc()
+        except Exception as exc:
+            print(f"[RealtimeClient] ERROR in reconnect: {exc}")
+            import traceback
+            traceback.print_exc()
+        except Exception as exc:
+            print(f"[RealtimeClient] ERROR in reconnect: {exc}")
+            import traceback
+            traceback.print_exc()
+            # Ensure streams restart even on error
+            try:
+                self.audio_manager.start_streams()
+            except:
+                pass
+            raise
+
+            if persona_object and (existing := next((p for p in personas if p["name"] == persona_object["name"]), None)):
+                print(f"[RealtimeClient] Updating existing persona: {persona_object['name']}")
+                existing.update(persona_object)
+            elif persona_object:
+                print(f"[RealtimeClient] Adding new persona: {persona_object['name']}")
+                personas.append(persona_object)
+
+            print(f"[RealtimeClient] Updating session with persona: {persona}")
+            await self.update_session(persona)
+            print("[RealtimeClient] Session updated.")
+            
+            print("[RealtimeClient] Sending awareness...")
+            await self.send_awareness()
+            print("[RealtimeClient] Awareness sent. Reconnect complete.")
+        except Exception as exc:
+            print(f"[RealtimeClient] ERROR in reconnect: {exc}")
+            import traceback
+            traceback.print_exc()
+            raise
 
     # ------------------------------------------------------------------
     # Messaging helpers
@@ -374,6 +446,11 @@ class RealtimeClient:
         if not event_type:
             return
 
+        #print(f"[ETLOG] Event Type: {event_type}")
+
+        #log event details for debug purposes
+        #print(f"[EDLOG] Event Details: {event}")
+
         # Direct event handling - no dictionary lookup needed
         if event_type == "audio":
             await self._handle_audio_event(event)
@@ -388,10 +465,36 @@ class RealtimeClient:
         elif event_type == "history_updated":
             self._handle_history_updated(event)
         elif event_type == "error":
-            print(f"[RealtimeClient] Error from session: {getattr(event, 'error', None)}")
-        elif event_type == "input_audio_timeout_triggered":
-            self.isDetectingUserSpeech = False
-            self.last_user_speech_time = time.time()
+                print(f"[RealtimeClient] Error from session: {getattr(event, 'error', None)}")
+
+        if event_type == "raw_model_event":
+            payload = getattr(event, "data", None)
+            sub_type = getattr(payload, "type", None)
+            inner_type = None
+            inner_payload = getattr(payload, "data", None)
+            if isinstance(inner_payload, dict):
+                inner_type = inner_payload.get("type")
+            elif hasattr(inner_payload, "type"):
+                inner_type = getattr(inner_payload, "type", None)
+
+            effective_type = inner_type or sub_type
+
+            #print(f"[RealtimeClient] Raw model event -> sub_type={sub_type}, inner_type={inner_type}")
+
+            if effective_type == "input_audio_buffer.speech_started":
+                self.isDetectingUserSpeech = True
+                self.last_user_speech_time = time.time()
+                print("[RealtimeClient] 🎤 User speech started - known from input buffer event")
+            elif effective_type == "input_audio_buffer.speech_stopped":
+                self.isDetectingUserSpeech = False
+                self.last_user_speech_time = time.time()
+                print("[RealtimeClient] 🎤 User speech stopped - known from buffer event")
+            elif effective_type == "input_audio_timeout_triggered":
+                self.isDetectingUserSpeech = False
+                self.last_user_speech_time = time.time()
+                print("[RealtimeClient] 🎤 User speech ended - known from timeout trigger")
+            elif sub_type == "error":
+                print(f"[RealtimeClient] Error from session: {getattr(event, 'error', None)}")
         # Note: Removed raw_model_event handling - use high-level session events instead
 
     # ------------------------------------------------------------------
@@ -732,6 +835,6 @@ class RealtimeClient:
             self.last_user_speech_time,
             self.last_response_created_time,
         )
-        if self.isDetectingUserSpeech or self.isReceivingAudio:
+        if self.isReceivingAudio:
             return False
         return (time.time() - last_activity) >= duration

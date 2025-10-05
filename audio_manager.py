@@ -336,7 +336,15 @@ class AudioManager:
         self.latest_volume = np.sqrt(np.mean(audio_data**2))
         current_time = time.time()
         
-        # When robot is speaking, use higher threshold to distinguish user speech from echo
+        # CRITICAL: When playing sound effects, ALWAYS drop audio (prevent feedback loops)
+        # Barge-in only applies to robot speech, not sound effects!
+        if self.action_manager.isPlayingSound and not self.action_manager.PIDOG_SPEAKER_DISABLED:
+            self._audio_chunks_dropped_talking += 1
+            if self._audio_chunks_dropped_talking % 50 == 1:
+                print(f"[AudioManager] Dropping audio (sound effect playing), dropped {self._audio_chunks_dropped_talking} total")
+            return (None, pyaudio.paContinue)
+        
+        # When robot is speaking (not sound effects), use barge-in logic
         if self.action_manager.isTalkingMovement and not self.action_manager.PIDOG_SPEAKER_DISABLED:
             # If barge-in explicitly disabled, drop all audio
             if not self.enable_barge_in:
