@@ -78,6 +78,8 @@ class RealtimeClient:
         self.persona = None
         self.first_response_event = asyncio.Event()
         self._touch_activity()  # Initialize all timestamps
+
+        self.event_bus = None
         
         # Response state tracking to prevent race conditions
         self._response_active = False
@@ -208,6 +210,22 @@ class RealtimeClient:
 
         print(f"[RealtimeClient] Session updated for persona '{persona}' with voice '{self.persona['voice']}'.")
 
+        event_bus = getattr(self, "event_bus", None)
+        if event_bus is not None:
+            try:
+                await event_bus.publish(
+                    "persona.switch.completed",
+                    {
+                        "name": self.persona.get("name"),
+                        "voice": self.persona.get("voice"),
+                        "description": self.persona.get("description"),
+                        "default_motivation": self.persona.get("default_motivation"),
+                    },
+                    metadata={"source": "realtime_client"},
+                )
+            except Exception as exc:
+                print(f"[RealtimeClient] Failed to publish persona update: {exc}")
+
     async def reconnect(self, persona: str, persona_object: Optional[Dict[str, Any]] = None) -> None:
         """Tear down and re-establish the realtime connection, optionally adding a persona."""
         print(f"[RealtimeClient] ===== RECONNECT CALLED: persona={persona}, has_object={persona_object is not None} =====")
@@ -335,6 +353,16 @@ class RealtimeClient:
         """Send a request message to the agent."""
         print(f"[RealtimeClient] Making out-of-band request: {request}")
         await self.send_text_message(request, role="user")
+
+    async def create_instruction_response(self, instructions: str) -> None:
+        """Push instructions as a fresh user message so the agent responds immediately."""
+        if not instructions:
+            return
+        cleaned = f"Internal Command: {instructions.strip()}"
+        if not cleaned:
+            return
+        print(f"[RealtimeClient] Creating instruction response: {cleaned}")
+        await self.send_text_message(cleaned, role="user")
 
     async def send_text_message(self, text: str, *, role: str = "user") -> None:
         """Send a text message to the session."""

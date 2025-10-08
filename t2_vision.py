@@ -14,6 +14,8 @@ CAMERA_FRAME_RATE = int(os.environ.get("CAMERA_FRAME_RATE", "10"))
 CAMERA_HFLIP = os.environ.get("CAMERA_HFLIP", "0") == "1"
 CAMERA_VFLIP = os.environ.get("CAMERA_VFLIP", "0") == "1"
 WEB_STREAM_ENABLED = os.environ.get("VILIB_WEB_STREAM", "0") == "1"
+WEB_STREAM_PORT = int(os.environ.get("VILIB_WEB_PORT", "9000"))
+WEB_STREAM_PATH = os.environ.get("VILIB_WEB_PATH", "/mjpg")
 FACE_DETECT_ENABLED = os.environ.get("FACE_DETECT_ENABLED", "1") == "1"
 FACE_DETECT_FRAME_SKIP = max(1, int(os.environ.get("FACE_DETECT_FRAME_SKIP", "1")))
 
@@ -32,6 +34,8 @@ if CAMERA_FRAME_RATE > 0:
         print(f"[t2_vision] Unable to set camera frame rate: {e}")
 
 Vilib.display(local=False, web=WEB_STREAM_ENABLED)
+_web_stream_enabled = WEB_STREAM_ENABLED
+_current_frame_rate = CAMERA_FRAME_RATE if CAMERA_FRAME_RATE > 0 else None
 if not WEB_STREAM_ENABLED:
     print("[t2_vision] Web streaming disabled")
 
@@ -122,9 +126,43 @@ def close_camera():
                 Vilib.flask_thread.stop()
             except Exception as e:
                 print(f"Error stopping Flask thread: {e}")
+        global _web_stream_enabled
+        _web_stream_enabled = False
         print("Camera stopped.")
     except Exception as e:
         print(f"Error stopping camera: {e}")
+
+
+def set_web_stream(enabled: bool, frame_rate: int | None = None) -> dict[str, object]:
+    """Enable or disable the Vilib web stream at runtime."""
+    global _web_stream_enabled, _current_frame_rate
+
+    try:
+        if frame_rate is not None:
+            if frame_rate <= 0:
+                raise ValueError("frame_rate must be positive when provided")
+            Vilib.set_controls({"FrameRate": frame_rate})
+            _current_frame_rate = frame_rate
+    except Exception as exc:
+        raise RuntimeError(f"Failed to update camera frame rate: {exc}") from exc
+
+    try:
+        Vilib.display(local=False, web=enabled)
+        _web_stream_enabled = enabled
+    except Exception as exc:
+        raise RuntimeError(f"Failed to {'enable' if enabled else 'disable'} web stream: {exc}") from exc
+
+    return get_web_stream_status()
+
+
+def get_web_stream_status() -> dict[str, object]:
+    """Return the current status of the Vilib web stream."""
+    return {
+        "enabled": _web_stream_enabled,
+        "frame_rate": _current_frame_rate,
+        "port": WEB_STREAM_PORT,
+        "path": WEB_STREAM_PATH,
+    }
 
 ## Legacy GPT vision request removed; realtime API now handles image messages directly.
 

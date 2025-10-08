@@ -134,6 +134,37 @@ python main.py
 
 The robot will boot, connect to OpenAI, and begin interacting. Use Ctrl+C to stop, or ask "Vector" to shut down.
 
+### Web Control Center
+
+The runtime now embeds a FastAPI web server that exposes telemetry, command, and awareness controls. By default it listens on `0.0.0.0:8080`, and can be customized via:
+
+- `K9_WEB_HOST` – interface to bind (default `0.0.0.0`)
+- `K9_WEB_PORT` – HTTP port (default `8080`)
+- `K9_WEB_API_TOKEN` – optional bearer token for securing REST/WebSocket calls
+
+The server will serve any production build dropped into `web/static`. To build the new React dashboard locally:
+
+1. Install a recent Node.js runtime (v18+ recommended).
+2. Install dependencies and run the development server:
+  ```sh
+  cd web/ui
+  npm install
+  npm run dev
+  ```
+  Configure `VITE_API_BASE` and `VITE_API_TOKEN` in a `.env.local` file if you proxy to a remote robot.
+3. Build static assets for deployment:
+  ```sh
+  npm run build
+  cp -r dist/* ../static/
+  ```
+
+With a build in place, browse to `http://<robot-ip>:8080/` to access the PiDog Control Center UI. The dashboard provides:
+
+- Live awareness of loop status, posture, and attitude
+- Camera tile that shows the most recent frame (with an ambient placeholder if no feed is available)
+- Real-time event stream and timeline derived from the backend event bus
+- Command console to toggle awareness/sensor loops, trigger preset actions, and enqueue custom awareness prompts
+
 ## Interacting with the dog
 
 See the [user guide](USING_K9-POLYVOX.md) to learn how to interact with k9-polyvox.

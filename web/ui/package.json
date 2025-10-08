@@ -1,0 +1,30 @@
+{
+  "name": "pidog-control-ui",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Slick web UI for PiDog remote control and telemetry.",
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "build:static": "npm run build && find ../static -mindepth 1 -not -name README.md -exec rm -rf {} + && cp -r dist/* ../static/",
+    "preview": "vite preview"
+  },
+  "dependencies": {
+    "framer-motion": "^11.1.9",
+    "lucide-react": "^0.344.0",
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1",
+    "zustand": "^4.5.2"
+  },
+  "devDependencies": {
+  "@types/node": "^20.14.9",
+  "@types/react": "^18.3.3",
+  "@types/react-dom": "^18.3.3",
+    "@vitejs/plugin-react": "^4.3.0",
+    "autoprefixer": "^10.4.17",
+    "postcss": "^8.4.39",
+    "tailwindcss": "^3.4.12",
+    "typescript": "^5.4.5",
+    "vite": "^5.4.2"
+  }
+}

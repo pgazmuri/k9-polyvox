@@ -1,0 +1,28 @@
+@import url("https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap");
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+* {
+  scrollbar-width: thin;
+  scrollbar-color: rgba(94, 80, 255, 0.6) rgba(13, 15, 30, 0.8);
+}
+
+*::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+
+*::-webkit-scrollbar-track {
+  background: rgba(13, 15, 30, 0.75);
+}
+
+*::-webkit-scrollbar-thumb {
+  background: linear-gradient(135deg, rgba(92, 92, 255, 0.85), rgba(46, 215, 201, 0.85));
+  border-radius: 10px;
+}
+
+body {
+  @apply bg-midnight min-h-screen;
+}

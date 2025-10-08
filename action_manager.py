@@ -5,7 +5,8 @@ import wave
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
 from functools import partial
-from typing import AsyncIterator, Awaitable, Callable, Dict, Optional
+from typing import TYPE_CHECKING, AsyncIterator, Awaitable, Callable, Dict, Optional
+from uuid import uuid4
 
 from audio_controller import AudioController
 from face_tracker import FaceTracker
@@ -15,6 +16,9 @@ from lightbar_controller import LightbarController
 from sensor_monitor import SensorMonitor
 from state_manager import RobotDogState
 from status_reporter import StatusReporter
+
+if TYPE_CHECKING:
+    from web.event_bus import EventBus
 
 FACE_TRACK_UPDATE_INTERVAL = float(os.environ.get("FACE_TRACK_UPDATE_INTERVAL", "0.05"))
 FACE_TRACK_RECENTER_TIMEOUT = float(os.environ.get("FACE_TRACK_RECENTER_TIMEOUT", "2.0"))
@@ -34,8 +38,8 @@ SOUND_DIR = f"{UserHome}/pidog/sounds/"
 LOCAL_SOUND_DIR = "audio/"
 
 # Volume settings (0-100) for system sound effects
-STARTUP_SOUND_VOLUME = int(os.environ.get("STARTUP_SOUND_VOLUME", "5"))
-PERSONA_TRANSITION_VOLUME = int(os.environ.get("PERSONA_TRANSITION_VOLUME", "5"))
+STARTUP_SOUND_VOLUME = int(os.environ.get("STARTUP_SOUND_VOLUME", "1"))
+PERSONA_TRANSITION_VOLUME = int(os.environ.get("PERSONA_TRANSITION_VOLUME", "1"))
 
 
 def get_sound_duration(sound_name: str) -> float:
@@ -97,7 +101,7 @@ class ActionManager:
     Manages all PiDog-specific actions and sensor interactions.
     """
 
-    def __init__(self):
+    def __init__(self, state: Optional[RobotDogState] = None, event_bus: Optional["EventBus"] = None):
         display_message("Status", "Booting PiDog...")
         #if env DISABLE_PIDOG_SPEAKER is set, use the patch
         if os.environ.get("DISABLE_PIDOG_SPEAKER") == "1":
@@ -136,7 +140,8 @@ class ActionManager:
         self.audio = AudioController(self.my_dog)
         self.lightbar = LightbarController(self.my_dog.rgb_strip)
 
-        self.state = RobotDogState()
+        self.state = state or RobotDogState()
+        self.event_bus = event_bus
         self.sensors = SensorMonitor(self.my_dog, self.state)
         self.status_reporter = StatusReporter(self.my_dog, self.state, self.sensors)
         self.head_pose = HeadPoseManager(self.head_controller, self.state)
@@ -161,6 +166,23 @@ class ActionManager:
         self._action_specs: Dict[str, ActionSpec] = self._build_action_specs()
         self._schedule_head_initialization()
 
+    async def _publish_event(
+        self,
+        event_type: str,
+        payload: Dict[str, object],
+        *,
+        metadata: Optional[Dict[str, object]] = None,
+    ) -> None:
+        if not self.event_bus:
+            return
+        meta = {"source": "action_manager"}
+        if metadata:
+            meta.update(metadata)
+        try:
+            await self.event_bus.publish(event_type, payload, metadata=meta)
+        except Exception as exc:
+            print(f"[ActionManager] Failed to publish event '{event_type}': {exc}")
+
     def _initialize_runtime_flags(self) -> None:
         self.sound_direction_status = ""
         self.vision_description = ""
@@ -168,6 +190,7 @@ class ActionManager:
         self.isPlayingSound = False
         self.isTakingAction = False
         self.last_change_time = 0
+        self.reminder_interval = float(os.environ.get("AWARENESS_REMINDER_INTERVAL", "15.0"))
         self.last_reminder_time = time.time()
         self.face_detection_interval = float(os.environ.get("FACE_DETECTION_INTERVAL", 0.8))
         self.environment_poll_interval = float(os.environ.get("ENVIRONMENT_POLL_INTERVAL", 0.5))
@@ -610,40 +633,79 @@ class ActionManager:
     async def perform_action(self, action_name):
         """Executes one or more PiDog actions by name (comma-separated)."""
         print(f"[ActionManager] Performing action(s): {action_name}")
-        self.isTakingAction = True
-        try:
-            if not action_name:
+        if not action_name:
+            return
+
+        batch_id = uuid4().hex
+        actions = [a.strip() for a in action_name.split(',') if a.strip()]
+
+        if len(actions) > 1:
+            filtered_actions: list[str] = []
+            for action in actions:
+                spec = self._action_specs.get(action)
+                if spec and spec.exclusive:
+                    print(
+                        f"[ActionManager] Skipping exclusive action '{action}' when combined with other commands."
+                    )
+                    continue
+                filtered_actions.append(action)
+
+            if not filtered_actions:
+                print(
+                    "[ActionManager] Ignoring combined request because all actions were exclusive-only."
+                )
                 return
 
-            actions = [a.strip() for a in action_name.split(',') if a.strip()]
+            actions = filtered_actions
 
-            if len(actions) > 1:
-                filtered_actions: list[str] = []
-                for action in actions:
-                    spec = self._action_specs.get(action)
-                    if spec and spec.exclusive:
-                        print(
-                            f"[ActionManager] Skipping exclusive action '{action}' when combined with other commands."
-                        )
-                        continue
-                    filtered_actions.append(action)
+        await self._publish_event(
+            "action.batch.started",
+            {"batchId": batch_id, "actions": actions},
+        )
 
-                if not filtered_actions:
-                    print(
-                        "[ActionManager] Ignoring combined request because all actions were exclusive-only."
-                    )
-                    return
-
-                actions = filtered_actions
-
-            for action in actions:
+        self.isTakingAction = True
+        try:
+            for index, action in enumerate(actions):
+                action_id = uuid4().hex
+                await self._publish_event(
+                    "action.started",
+                    {
+                        "batchId": batch_id,
+                        "actionId": action_id,
+                        "name": action,
+                        "index": index,
+                        "count": len(actions),
+                    },
+                )
                 try:
                     await self._execute_single_action(action)
                 except Exception as e:
                     print(f"[ActionManager] Error during action '{action}': {e}")
+                    await self._publish_event(
+                        "action.failed",
+                        {
+                            "batchId": batch_id,
+                            "actionId": action_id,
+                            "name": action,
+                            "error": str(e),
+                        },
+                    )
+                else:
+                    await self._publish_event(
+                        "action.completed",
+                        {
+                            "batchId": batch_id,
+                            "actionId": action_id,
+                            "name": action,
+                        },
+                    )
         finally:
             self.my_dog.wait_all_done()
             self.isTakingAction = False
+            await self._publish_event(
+                "action.batch.finished",
+                {"batchId": batch_id, "actions": actions},
+            )
 
         print("[ActionManager] Done performing actions.")
 
@@ -780,6 +842,11 @@ class ActionManager:
         async def _perform_creation():
             new_persona = None
             try:
+                print("[ActionManager] Suspending realtime client before persona creation...")
+                try:
+                    await client.close()
+                except Exception as close_error:
+                    print(f"[ActionManager] Warning: failed to close client before persona creation: {close_error}")
                 print("[ActionManager] Entering persona transition context...")
                 async with self._persona_transition("white", "audio/angelic_ascending.mp3"):
                     print("[ActionManager] Inside context, generating persona (music playing in background)...")
@@ -803,6 +870,11 @@ class ActionManager:
                 print(f"[ActionManager] ERROR in persona creation: {e}")
                 import traceback
                 traceback.print_exc()
+                if getattr(client, "persona", None):
+                    try:
+                        await client.reconnect(client.persona.get("name"), client.persona)
+                    except Exception as reconnect_error:
+                        print(f"[ActionManager] Failed to restore previous persona after error: {reconnect_error}")
 
         self._persona_creation_task = asyncio.create_task(_perform_creation())
 
@@ -826,17 +898,11 @@ class ActionManager:
         self._persona_switch_task = asyncio.create_task(_perform_switch())
 
 
-    async def detect_status(self, audio_manager, client):
-        """
-        Background task that detects changes in environment and updates the goal.
-        Also periodically reminds the model of its default goal if it's been inactive.
-        """
+    async def monitor_sensors(self, audio_manager, client):
+        """Monitor sensors and publish stimuli without affecting awareness reminders."""
         is_change = False
-        reminder_interval = 15  # seconds between spontaneous prompts when idle
         self.last_change_time = 0  # Track the last time a change was noticed
-        # Backdate reminder timer so the first loop can trigger an immediate wake-up prompt once ready
-        self.last_reminder_time = time.time() - reminder_interval
-        
+
         while True:
             try:
                 # print("Volume: ", audio_manager.latest_volume)
@@ -845,6 +911,42 @@ class ActionManager:
                 sound_changed = self.detect_sound_direction_change(client)
                 face_changed = await self.detect_face_change()
                 orientation_changed = self.detect_orientation_change()
+
+                if petting_changed:
+                    await self._publish_event(
+                        "sensor.petting",
+                        {
+                            "isBeingPetted": bool(getattr(self.state, "is_being_petted", False)),
+                            "timestamp": time.time(),
+                        },
+                    )
+
+                if sound_changed:
+                    await self._publish_event(
+                        "sensor.sound",
+                        {
+                            "direction": self.state.last_sound_direction,
+                            "timestamp": time.time(),
+                        },
+                    )
+
+                if face_changed:
+                    await self._publish_event(
+                        "sensor.face",
+                        {
+                            "present": bool(self.state.face_present),
+                            "lastSeen": self.state.face_last_seen_at,
+                        },
+                    )
+
+                if orientation_changed:
+                    await self._publish_event(
+                        "sensor.orientation",
+                        {
+                            "description": self.state.last_orientation_description,
+                            "timestamp": time.time(),
+                        },
+                    )
 
                 # Combine for overall change
                 is_change = petting_changed or sound_changed or face_changed or orientation_changed
@@ -914,6 +1016,13 @@ class ActionManager:
                             getattr(audio_manager, "latest_volume", -1),
                             self.state.last_sound_direction or "unknown",
                         )
+                    )
+                    await self._publish_event(
+                        "sensor.stimulus",  # Aggregated stimulus event for UI timeline
+                        {
+                            "entries": event_entries,
+                            "timestamp": current_time,
+                        },
                     )
 
                 # Update reminder time when actually busy (not just detecting speech)
@@ -997,17 +1106,40 @@ class ActionManager:
                                 ", ".join(blocking_flags) if blocking_flags else "<none>",
                             )
                         )
+
+                await asyncio.sleep(self.environment_poll_interval)
+                is_change = False
+            except asyncio.CancelledError:
+                print("[ActionManager] monitor_sensors cancelled.")
+                raise
+            except Exception as e:
+                print(f"[ActionManager::monitor_sensors] Error: {e}")
+                await asyncio.sleep(1)  # Prevent tight loop on failure
+
+    async def awareness_heartbeat(self, client):
+        """Periodically nudges the model when idle if awareness is enabled."""
+        reminder_interval = max(self.reminder_interval, 1.0)
+        # Backdate timer so we can prompt shortly after enabling awareness
+        self.last_reminder_time = time.time() - reminder_interval
+
+        while True:
+            try:
+                current_time = time.time()
+                busy = self.isTalkingMovement or self.isTakingAction or self.isPlayingSound
+                model_active = (
+                    client.isReceivingAudio
+                    or getattr(client, "has_active_response", False)
+                    or getattr(client, "isDetectingUserSpeech", False)
+                )
+
+                if busy or model_active:
+                    self.last_reminder_time = current_time
                 else:
-                    # Check if we need to remind of default goal
                     elapsed_since_reminder = current_time - self.last_reminder_time
                     if (
-                        not self.isTalkingMovement and
-                        not self.isTakingAction and
-                        not client.isReceivingAudio and
-                        not client.isDetectingUserSpeech and
-                        not getattr(client, "has_active_response", False) and
-                        elapsed_since_reminder > reminder_interval and
-                        client.persona is not None
+                        not self._wakeup_active
+                        and elapsed_since_reminder > reminder_interval
+                        and client.persona is not None
                     ):
                         if client.first_response_event.is_set():
                             self._wakeup_active = True
@@ -1019,13 +1151,14 @@ class ActionManager:
                             self.last_reminder_time = current_time
                         else:
                             print("[ActionManager] Skipping reminder until model speaks at least once.")
-                        # reminder_interval = random.randint(45, 60)  # Randomize next interval
 
                 await asyncio.sleep(self.environment_poll_interval)
-                is_change = False
-            except Exception as e:
-                print(f"[ActionManager::detect_status] Error: {e}")
-                await asyncio.sleep(1)  # Prevent tight loop on failure
+            except asyncio.CancelledError:
+                print("[ActionManager] awareness_heartbeat cancelled.")
+                raise
+            except Exception as exc:
+                print(f"[ActionManager::awareness_heartbeat] Error: {exc}")
+                await asyncio.sleep(1)
 
     async def perform_inline_photo(self, client):
         print(f"[ActionManager] Performing inline photo (wake-up) with persona: {client.persona}")

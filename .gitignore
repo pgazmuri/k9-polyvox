@@ -2,3 +2,19 @@ __pycache__
 ~
 keys.py
 
+# Frontend build artifacts
+web/ui/node_modules/
+web/ui/dist/
+web/ui/.vite/
+web/ui/.parcel-cache/
+web/ui/package-lock.json
+web/ui/pnpm-lock.yaml
+web/ui/yarn.lock
+web/ui/.env*
+
+
+# Logs
+npm-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+

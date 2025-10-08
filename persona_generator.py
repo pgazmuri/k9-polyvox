@@ -23,7 +23,9 @@ async def generate_persona(persona_description: str) -> dict:
     - echo: A resonant and impactful male voice, great for authoritative or commanding personas.
     - sage: A gentle presence. Female voice. Calming and soothing. Like an optimistic peacemaker, or maybe a love-filled hippie
     - shimmer: A soft and steady female voice with a glimmer of play, perfect for comforting or empathetic characters.
-    - verse: A friendly male voice, not authoritative, non threatening.
+    - verse: A friendly male voice, not authoritative, non threatening, very sing-songy.
+    - marin: A female voice, warm, friendly, with a playful and engaging tone. It's smooth, clear, and a bit lively. Can be authoritative, protective, or controlling. Very versatile. A next-gen voice with greater expressiveness (intonation, prosody, emotional variance) than older voices
+    - cedar: A male voice, warm, friendly, with a playful and engaging tone. It's smooth, clear, and a bit lively. Can be authoritative, protective, or controlling. Very versatile. A next-gen voice with greater expressiveness (intonation, prosody, emotional variance) than older voices
     """
 
     messages = [

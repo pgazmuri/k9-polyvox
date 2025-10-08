@@ -82,6 +82,9 @@ class AudioManager:
         self.incoming_audio_queue = asyncio.Queue(maxsize=500)  # Larger buffer for playback
         self.playback_idle_event = asyncio.Event()
         self.playback_idle_event.set()
+        self._closing = False
+        self._closed = False
+        self._loop_warning_logged = False
         self.dropped_frames = 0
         self.is_shutting_down = False  # Shutdown flag
         self._playback_task = None  # To manage the playback task
@@ -108,6 +111,7 @@ class AudioManager:
         # Speech amplitude tracking for head motion
         self.current_speech_amplitude = 0.0  # Normalized 0.0-1.0
         self.speech_amp_smoothing = float(os.environ.get("SPEECH_AMP_SMOOTHING", "0.15"))  # EMA alpha
+        self._audio_buffer = bytearray()
 
         # Find device indices (replace with your actual logic if needed)
         # self.input_device_index = self._find_device_index("pulse")  # Example
@@ -132,10 +136,7 @@ class AudioManager:
         #         stream_callback=self.audio_output_callback
         #     )
         self.incoming_audio_queue = asyncio.Queue()
-        if self.loop.is_running():
-            self.loop.call_soon_threadsafe(self.playback_idle_event.set)
-        else:
-            self.playback_idle_event.set()
+        self._signal_playback_idle()
         self._audio_buffer = bytearray()
 
     def interrupt_playback(self, reason: str = ""):
@@ -144,10 +145,48 @@ class AudioManager:
         self.clear_audio_buffer()
         if self.action_manager and self.action_manager.isTalkingMovement:
             try:
-                if self.loop.is_running():
+                if self._loop_is_active():
                     self.loop.call_soon_threadsafe(asyncio.create_task, self.action_manager.stop_talking())
+                else:
+                    self.action_manager.isTalkingMovement = False
             except Exception as exc:
                 print(f"[AudioManager] Error scheduling stop_talking: {exc}")
+
+
+    def _loop_is_active(self) -> bool:
+        loop = self.loop
+        if not loop:
+            return False
+        try:
+            if loop.is_closed():
+                return False
+        except AttributeError:
+            pass
+        try:
+            return loop.is_running()
+        except RuntimeError:
+            return False
+
+    def _signal_playback_idle(self) -> None:
+        if self._loop_is_active():
+            try:
+                self.loop.call_soon_threadsafe(self.playback_idle_event.set)
+            except RuntimeError:
+                self.playback_idle_event.set()
+        else:
+            self.playback_idle_event.set()
+
+    def _drain_asyncio_queue(self, queue: asyncio.Queue) -> None:
+        try:
+            while not queue.empty():
+                queue.get_nowait()
+                try:
+                    queue.task_done()
+                except ValueError:
+                    # task_done may raise if unfinished_tasks would go negative; ignore in shutdown
+                    pass
+        except Exception:
+            pass
 
 
     def _get_default_device(self, is_input: bool):
@@ -282,16 +321,15 @@ class AudioManager:
         self.latest_volume = 0
         self.current_speech_amplitude = 0.0
         self.action_manager.isTalkingMovement = False
-        self.incoming_audio_queue = asyncio.Queue(maxsize=500)
-        self.outgoing_data_queue = asyncio.Queue(maxsize=500)
-        if self.loop.is_running():
-            self.loop.call_soon_threadsafe(self.playback_idle_event.set)
-        else:
-            self.playback_idle_event.set()
+        self._drain_asyncio_queue(self.incoming_audio_queue)
+        self._drain_asyncio_queue(self.outgoing_data_queue)
+        self._audio_buffer = bytearray()
+        self._signal_playback_idle()
         print("[AudioManager] Queues cleared.")
 
     def start_streams(self):
         """Initialize both input and output streams with error handling."""
+        self._loop_warning_logged = False
         try:
             input_kwargs = dict(
                 format=pyaudio.paInt16,
@@ -332,6 +370,9 @@ class AudioManager:
             print("[AudioManager] One or both streams failed to initialize. Please check the configuration.")
 
     def audio_input_callback(self, in_data, frame_count, time_info, status):
+        if self._closing or self._closed:
+            return (None, pyaudio.paComplete)
+
         audio_data = np.frombuffer(in_data, dtype=np.int16)
         self.latest_volume = np.sqrt(np.mean(audio_data**2))
         current_time = time.time()
@@ -409,10 +450,18 @@ class AudioManager:
             self._audio_chunks_captured += 1
             if self._audio_chunks_captured % 100 == 1:  # Log every 100th chunk
                 print(f"[AudioManager] Captured {self._audio_chunks_captured} audio chunks, queue size: {self.outgoing_data_queue.qsize()}")
-            if self.loop.is_running():
-                asyncio.run_coroutine_threadsafe(self._safe_queue_put(resampled_bytes), self.loop)
+            loop = self.loop
+            if self._loop_is_active() and loop is not None:
+                try:
+                    asyncio.run_coroutine_threadsafe(self._safe_queue_put(resampled_bytes), loop)
+                except RuntimeError:
+                    if not self._loop_warning_logged:
+                        print(f"[AudioManager] WARNING: Event loop not accepting audio; dropping mic chunk")
+                        self._loop_warning_logged = True
             else:
-                print(f"[AudioManager] WARNING: Event loop not running, cannot queue audio!")
+                if not self._loop_warning_logged and not self._closing:
+                    print(f"[AudioManager] WARNING: Event loop not running, dropping mic audio")
+                    self._loop_warning_logged = True
         except Exception as e:
             print(f"[AudioManager] Error adding audio to outgoing_data_queue: {e}")
             traceback.print_exc()
@@ -423,7 +472,7 @@ class AudioManager:
         return (None, pyaudio.paContinue)
 
     async def _safe_queue_put(self, data):
-        if not self.loop.is_running():
+        if self._closing or self._closed or not self._loop_is_active():
             return
 
         try:
@@ -437,6 +486,10 @@ class AudioManager:
                 print(f"[AudioManager] Error in _safe_queue_put: {e}")
 
     def audio_output_callback(self, in_data, frame_count, time_info, status):
+        if self._closing or self._closed:
+            silence = b"\x00" * frame_count * 2
+            return (silence, pyaudio.paComplete)
+
         try:
             expected_size = frame_count * 2
 
@@ -472,10 +525,7 @@ class AudioManager:
 
             if len(self._audio_buffer) == 0 and self.incoming_audio_queue.empty():
                 if not self.playback_idle_event.is_set():
-                    if self.loop.is_running():
-                        self.loop.call_soon_threadsafe(self.playback_idle_event.set)
-                    else:
-                        self.playback_idle_event.set()
+                    self._signal_playback_idle()
 
             audio_data_np = np.frombuffer(audio_chunk, dtype=np.int16)
             scaled_data_np = np.clip(audio_data_np * self.action_manager.state.volume, -32768, 32767).astype(np.int16)
@@ -518,25 +568,62 @@ class AudioManager:
             raise
 
     def close(self):
+        if self._closed:
+            print("[AudioManager] Close called but streams already terminated.")
+            return
+        if self._closing:
+            print("[AudioManager] Close already in progress.")
+            return
+
         print("[AudioManager] Closing streams...")
-        if self.input_stream:
-            try:
-                self.input_stream.stop_stream()
-                self.input_stream.close()
-            except Exception as e:
-                print(f"[AudioManager] Error closing input stream: {e}")
+        self._closing = True
+        self.is_shutting_down = True
 
-        if self.output_stream:
-            try:
-                self.output_stream.stop_stream()
-                self.output_stream.close()
-            except Exception as e:
-                print(f"[AudioManager] Error closing output stream: {e}")
+        try:
+            if self.input_stream:
+                try:
+                    self.input_stream.stop_stream()
+                    self.input_stream.close()
+                except Exception as e:
+                    print(f"[AudioManager] Error closing input stream: {e}")
+                finally:
+                    self.input_stream = None
 
-        if self.p:
-            try:
-                self.p.terminate()
-            except Exception as e:
-                print(f"[AudioManager] Error terminating PyAudio: {e}")
+            if self.output_stream:
+                try:
+                    self.output_stream.stop_stream()
+                    self.output_stream.close()
+                except Exception as e:
+                    print(f"[AudioManager] Error closing output stream: {e}")
+                finally:
+                    self.output_stream = None
 
-        print("[AudioManager] Streams closed.")
+            if self.action_manager and self.action_manager.isTalkingMovement:
+                try:
+                    if self._loop_is_active():
+                        self.loop.call_soon_threadsafe(asyncio.create_task, self.action_manager.stop_talking())
+                    self.action_manager.isTalkingMovement = False
+                except Exception as exc:
+                    print(f"[AudioManager] Error scheduling stop_talking during close: {exc}")
+
+            self._drain_asyncio_queue(self.outgoing_data_queue)
+            self._drain_asyncio_queue(self.incoming_audio_queue)
+            self._audio_buffer = bytearray()
+            self._signal_playback_idle()
+
+            self.dropped_frames = 0
+            self.latest_volume = 0.0
+            self.current_speech_amplitude = 0.0
+
+            if self.p:
+                try:
+                    self.p.terminate()
+                except Exception as e:
+                    print(f"[AudioManager] Error terminating PyAudio: {e}")
+                finally:
+                    self.p = None
+        finally:
+            self._loop_warning_logged = True
+            self._closed = True
+            self._closing = False
+            print("[AudioManager] Streams closed.")
