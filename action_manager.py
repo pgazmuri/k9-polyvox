@@ -27,6 +27,7 @@ STIMULUS_MIN_INTERVAL = float(os.environ.get("STIMULUS_MIN_INTERVAL", "5.0"))  #
 STIMULUS_QUIET_PERIOD = float(os.environ.get("STIMULUS_QUIET_PERIOD", "3.0"))  # How long to wait for quiet before reacting
 STIMULUS_GRACE_AFTER_FIRST_UTTERANCE = float(os.environ.get("STIMULUS_GRACE_AFTER_FIRST_UTTERANCE", "15.0"))  # Cooldown after conversation starts
 SOUND_PASSIVE_WAIT = float(os.environ.get("SOUND_PASSIVE_WAIT", "2.0"))
+SOUND_LOUD_MESSAGE_THRESHOLD = float(os.environ.get("SOUND_LOUD_MESSAGE_THRESHOLD", "35.0"))
 
 # External dependencies
 from pidog import Pidog
@@ -552,11 +553,11 @@ class ActionManager:
     def detect_sound_direction(self):
         return self.sensors.detect_sound_direction()
 
-    def detect_sound_direction_change(self, client=None):
+    def detect_sound_direction_change(self, client=None, audio_manager=None):
         # Don't detect sound direction when robot is talking (it's just our own voice!)
         if self.isTalkingMovement or self.isPlayingSound:
             return False
-        return self.sensors.detect_sound_direction_change(client)
+        return self.sensors.detect_sound_direction_change(client, audio_manager)
 
     async def detect_face_change(self):
         """Detects if a face is in front of the dog."""
@@ -908,7 +909,8 @@ class ActionManager:
                 # print("Volume: ", audio_manager.latest_volume)
                 # Detect individual changes
                 petting_changed = self.detect_petting_change()
-                sound_changed = self.detect_sound_direction_change(client)
+                sound_changed = self.detect_sound_direction_change(client, audio_manager)
+                recent_peak = audio_manager.get_recent_peak_volume() if audio_manager else 0.0
                 face_changed = await self.detect_face_change()
                 orientation_changed = self.detect_orientation_change()
 
@@ -967,7 +969,8 @@ class ActionManager:
                 # Sound direction: passive update, only force response if no speech detected
                 if sound_changed:
                     direction = self.state.last_sound_direction or "an unknown direction"
-                    if getattr(audio_manager, "latest_volume", 0) > 30:
+                    volume_at_detection = self.state.last_sound_volume if getattr(self.state, "last_sound_volume", None) is not None else recent_peak
+                    if volume_at_detection >= SOUND_LOUD_MESSAGE_THRESHOLD:
                         message = f"A loud sound came from your {direction}. React, look that way, and respond."
                     else:
                         message = f"A quiet sound came from your {direction}. Still acknowledge it, look briefly that way, and respond."
@@ -1006,6 +1009,9 @@ class ActionManager:
                     event_entries.append(("orientation", f"{orientation_msg} You must act or speak in response."))
 
                 if event_entries:
+                    volume_for_log = getattr(self.state, "last_sound_volume", None)
+                    if volume_for_log is None:
+                        volume_for_log = recent_peak
                     print(
                         "[ActionManager] Sensor change detected -> petting=%s sound=%s face=%s orientation=%s volume=%.1f direction=%s"
                         % (
@@ -1013,7 +1019,7 @@ class ActionManager:
                             sound_changed,
                             face_changed,
                             orientation_changed,
-                            getattr(audio_manager, "latest_volume", -1),
+                            volume_for_log,
                             self.state.last_sound_direction or "unknown",
                         )
                     )

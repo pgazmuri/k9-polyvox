@@ -27,7 +27,7 @@ from function_call_manager import admin_tools, get_base_tools
 from system_prompts import personas
 from prompt_builder import build_persona_instructions
 from tool_builder import build_function_tools, extract_api_key
-
+from audio_manager import AudioManager
 
 @dataclass
 class _QueuedAction:
@@ -46,7 +46,7 @@ class RealtimeClient:
         model: str,
         headers: Optional[Dict[str, str]],
         function_call_manager,
-        audio_manager,
+        audio_manager: AudioManager,
         action_manager,
     ) -> None:
         self.ws_url = ws_url

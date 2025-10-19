@@ -1,6 +1,7 @@
 import asyncio
 import base64
 import os
+from collections import deque
 import numpy as np
 import resampy
 import pyaudio
@@ -8,9 +9,10 @@ from queue import Queue
 import time
 import traceback
 import wave
-from typing import Optional
+from typing import Deque, Optional, Tuple, TYPE_CHECKING
 
-from realtime_client import RealtimeClient
+if TYPE_CHECKING:
+    from realtime_client import RealtimeClient
 
 class AudioManager:
     """
@@ -112,6 +114,11 @@ class AudioManager:
         self.current_speech_amplitude = 0.0  # Normalized 0.0-1.0
         self.speech_amp_smoothing = float(os.environ.get("SPEECH_AMP_SMOOTHING", "0.15"))  # EMA alpha
         self._audio_buffer = bytearray()
+        # Rolling microphone RMS tracking for stimulus gating
+        self._input_rms_window_sec = float(os.environ.get("SOUND_INPUT_RMS_WINDOW_SEC", "0.5"))
+        self._input_rms_samples: Deque[Tuple[float, float]] = deque()
+        self._playback_was_active = False
+        self._last_playback_end_time = 0.0
 
         # Find device indices (replace with your actual logic if needed)
         # self.input_device_index = self._find_device_index("pulse")  # Example
@@ -138,6 +145,7 @@ class AudioManager:
         self.incoming_audio_queue = asyncio.Queue()
         self._signal_playback_idle()
         self._audio_buffer = bytearray()
+        self.reset_recent_input_levels()
 
     def interrupt_playback(self, reason: str = ""):
         reason_str = f" ({reason})" if reason else ""
@@ -175,6 +183,63 @@ class AudioManager:
                 self.playback_idle_event.set()
         else:
             self.playback_idle_event.set()
+
+    def reset_recent_input_levels(self) -> None:
+        self._input_rms_samples.clear()
+
+    def _update_recent_input_volume(self, timestamp: float, volume: float) -> None:
+        if self.is_playback_active():
+            # Drop samples captured while robot audio is playing to avoid echo contamination.
+            self.reset_recent_input_levels()
+            return
+
+        self._input_rms_samples.append((timestamp, volume))
+        cutoff = timestamp - self._input_rms_window_sec
+        while self._input_rms_samples and self._input_rms_samples[0][0] < cutoff:
+            self._input_rms_samples.popleft()
+
+    def get_recent_average_volume(self) -> float:
+        if not self._input_rms_samples:
+            return 0.0
+        total = sum(sample[1] for sample in self._input_rms_samples)
+        return total / len(self._input_rms_samples)
+
+    def get_recent_peak_volume(self) -> float:
+        if not self._input_rms_samples:
+            return 0.0
+        return max(sample[1] for sample in self._input_rms_samples)
+
+    def _note_playback_state(self, active: bool, timestamp: float) -> None:
+        if active:
+            if not self._playback_was_active:
+                self._playback_was_active = True
+                self._last_playback_end_time = 0.0
+                self.reset_recent_input_levels()
+            return
+
+        if self._playback_was_active:
+            self._playback_was_active = False
+            self._last_playback_end_time = timestamp
+
+    def is_playback_active(self) -> bool:
+        if self._playback_was_active:
+            return True
+        if not self.playback_idle_event.is_set():
+            return True
+        if getattr(self, "_audio_buffer", None):
+            if len(self._audio_buffer) > 0:
+                return True
+        return not self.incoming_audio_queue.empty()
+
+    def playback_recently_active(self, interval: float) -> bool:
+        if self.is_playback_active():
+            return True
+        if self._last_playback_end_time <= 0.0:
+            return False
+        return (time.time() - self._last_playback_end_time) < interval
+
+    def get_last_playback_end_time(self) -> float:
+        return self._last_playback_end_time
 
     def _drain_asyncio_queue(self, queue: asyncio.Queue) -> None:
         try:
@@ -325,6 +390,8 @@ class AudioManager:
         self._drain_asyncio_queue(self.outgoing_data_queue)
         self._audio_buffer = bytearray()
         self._signal_playback_idle()
+        self._note_playback_state(False, time.time())
+        self.reset_recent_input_levels()
         print("[AudioManager] Queues cleared.")
 
     def start_streams(self):
@@ -376,6 +443,7 @@ class AudioManager:
         audio_data = np.frombuffer(in_data, dtype=np.int16)
         self.latest_volume = np.sqrt(np.mean(audio_data**2))
         current_time = time.time()
+        self._update_recent_input_volume(current_time, self.latest_volume)
         
         # CRITICAL: When playing sound effects, ALWAYS drop audio (prevent feedback loops)
         # Barge-in only applies to robot speech, not sound effects!
@@ -492,6 +560,7 @@ class AudioManager:
 
         try:
             expected_size = frame_count * 2
+            now = time.time()
 
             if not hasattr(self, "_audio_buffer"):
                 self._audio_buffer = bytearray()
@@ -505,6 +574,7 @@ class AudioManager:
             has_real_audio = len(self._audio_buffer) >= expected_size
             
             if has_real_audio:
+                self._note_playback_state(True, now)
                 # Start head talking only when we actually have audio to play
                 if not self.action_manager.isTalkingMovement:
                     self.action_manager.isTalkingMovement = True
@@ -522,6 +592,9 @@ class AudioManager:
                     self.action_manager.isTalkingMovement = False
                     self.current_speech_amplitude = 0.0  # Reset amplitude when stopping
                     self.loop.call_soon_threadsafe(asyncio.create_task, self.action_manager.stop_talking())
+
+                if len(self._audio_buffer) == 0 and self.incoming_audio_queue.empty():
+                    self._note_playback_state(False, now)
 
             if len(self._audio_buffer) == 0 and self.incoming_audio_queue.empty():
                 if not self.playback_idle_event.is_set():

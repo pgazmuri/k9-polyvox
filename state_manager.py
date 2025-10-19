@@ -71,6 +71,7 @@ class PerceptionState:
     face_detected_at: Optional[float] = None
     face_last_seen_at: Optional[float] = None
     last_sound_direction: Optional[str] = None
+    last_sound_volume: Optional[float] = None
     last_orientation_description: Optional[str] = None
     is_being_petted: bool = False
     petting_detected_at: Optional[float] = None
@@ -168,6 +169,14 @@ class RobotState:
     @last_sound_direction.setter
     def last_sound_direction(self, value: Optional[str]) -> None:
         self.perception.last_sound_direction = value
+
+    @property
+    def last_sound_volume(self) -> Optional[float]:
+        return self.perception.last_sound_volume
+
+    @last_sound_volume.setter
+    def last_sound_volume(self, value: Optional[float]) -> None:
+        self.perception.last_sound_volume = value
 
     @property
     def last_orientation_description(self) -> Optional[str]:
