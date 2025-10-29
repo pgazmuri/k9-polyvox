@@ -16,15 +16,11 @@ from realtime_client import RealtimeClient
 import threading
 import multiprocessing
 
-from keys import OPENAI_API_KEY  # Adjust to wherever your key is
-# Or define OPENAI_API_KEY = "..."
+from keys import GEMINI_API_KEY  # Adjust to wherever your key is
+# Or define GEMINI_API_KEY = "..."
 
-WS_URL = "wss://api.openai.com/v1/realtime"
-MODEL = "gpt-realtime"
-
-headers = {
-    "Authorization": f"Bearer {OPENAI_API_KEY}",
-}
+# Gemini Live API configuration
+MODEL = "gemini-2.0-flash-live-001"  # Half-cascade model with better tool support
 
 # Global references for cleanup during shutdown
 action_manager = None
@@ -109,9 +105,8 @@ async def main():
     audio_manager = AudioManager(action_manager=action_manager, loop=loop)
 
     client = RealtimeClient(
-        ws_url=WS_URL,
         model=MODEL,
-        headers=headers,
+        api_key=GEMINI_API_KEY,
         function_call_manager=None,
         audio_manager=audio_manager,
         action_manager=action_manager
@@ -141,7 +136,7 @@ async def main():
         loop.add_signal_handler(sig, handle_signal, sig)
 
     try:
-        # 1. Connect to GPT
+        # 1. Connect to Gemini
         await client.connect()
 
         # Start audio streams *after* connection and loop is running

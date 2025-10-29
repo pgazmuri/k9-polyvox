@@ -1,10 +1,10 @@
 # k9-polyvox
 
-k9-polyvox is a persona-driven robot dog project for the [SunFounder PiDog](https://www.sunfounder.com/products/pidog) platform. It features real-time speech, persona switching, robotic actions, and integration with OpenAI's GPT models for vision interpretation and persona creation. The project is designed for Raspberry Pi and leverages the official PiDog hardware and software stack.
+k9-polyvox is a persona-driven robot dog project for the [SunFounder PiDog](https://www.sunfounder.com/products/pidog) platform. It features real-time speech, persona switching, robotic actions, and integration with Google Gemini's Live API for real-time audio conversations and persona creation. The project is designed for Raspberry Pi and leverages the official PiDog hardware and software stack.
 
 ## Features
 
-- Real-time conversation and audio streaming with OpenAI GPT models
+- Real-time conversation and audio streaming with Google Gemini Live API
 - Multiple, switchable robot dog personas with unique behaviors and voices
 - Physical actions: head/leg/tail movement, lightbar effects, and sound playback
 - Sensor integration: touch, sound direction, face detection, and more
@@ -91,11 +91,13 @@ sudo pip install -r requirements.txt --break-system-packages
 
 ### 4. Configure API Keys
 
-Edit the `keys.py` file in the project root with your OpenAI API key:
+Edit the `keys.py` file in the project root with your Google Gemini API key:
 
 ```python
-OPENAI_API_KEY = "sk-..."
+GEMINI_API_KEY = "YOUR_GEMINI_API_KEY_HERE"
 ```
+
+You can get a Gemini API key from [Google AI Studio](https://aistudio.google.com/apikey).
 
 ### 5. (Optional) Disable Audio or Display
 
@@ -132,7 +134,7 @@ Start the main program:
 python main.py
 ```
 
-The robot will boot, connect to OpenAI, and begin interacting. Use Ctrl+C to stop, or ask "Vector" to shut down.
+The robot will boot, connect to Google Gemini, and begin interacting. Use Ctrl+C to stop, or ask "Vector" to shut down.
 
 ## Interacting with the dog
 

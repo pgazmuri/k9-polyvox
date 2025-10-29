@@ -1,14 +1,12 @@
 """
 Tool Builder Module
 
-Handles construction of FunctionTool instances for the OpenAI Realtime API.
+Handles construction of function/tool instances for LLM APIs (OpenAI, Gemini).
 Separated from RealtimeClient to keep client focused on connection/event management.
 """
 
 import json
 from typing import Any, Dict, List
-
-from agents.tool import FunctionTool  # type: ignore[import-not-found]
 
 
 def build_function_tools(
@@ -110,3 +108,45 @@ def extract_api_key(headers: Dict[str, str] | None) -> str | None:
     if isinstance(auth_header, str) and auth_header.startswith("Bearer "):
         return auth_header.split(" ", 1)[1].strip()
     return None
+
+
+def build_function_tools_gemini(
+    function_call_manager,
+    persona_name: str,
+    available_actions: List[str],
+    personas: List[Dict[str, Any]],
+    get_base_tools_func: Any,
+    admin_tools_list: List[Dict[str, Any]]
+) -> List[Dict[str, Any]]:
+    """
+    Build Gemini-compatible function declarations.
+
+    Gemini uses a different format than OpenAI - simple dict declarations
+    instead of FunctionTool objects.
+
+    Args:
+        function_call_manager: Manager to execute tools
+        persona_name: Name of the active persona
+        available_actions: List of available robot actions
+        personas: All available personas
+        get_base_tools_func: Function to get base tool specifications
+        admin_tools_list: List of admin tool specifications
+
+    Returns:
+        List of Gemini function declarations (dicts)
+    """
+    tool_specs = get_base_tools_func(personas, available_actions)
+    if persona_name == "Vektor Pulsecheck":
+        tool_specs = [*tool_specs, *admin_tools_list]
+
+    # Convert to Gemini format
+    gemini_tools = []
+    for spec in tool_specs:
+        gemini_tool = {
+            "name": spec["name"],
+            "description": spec.get("description", ""),
+            "parameters": spec.get("parameters", {"type": "object", "properties": {}, "required": []})
+        }
+        gemini_tools.append(gemini_tool)
+
+    return gemini_tools
